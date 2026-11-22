@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react';
-import { Tooltip as TooltipPrimitive } from 'radix-ui';
-import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
-import { COMPOSER_PREVIEW_CLASS } from './tab-preview';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 export function ComposerToolTooltip({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -9,12 +7,7 @@ export function ComposerToolTooltip({ label, children }: { label: string; childr
       <TooltipTrigger asChild>
         <span className="inline-flex">{children}</span>
       </TooltipTrigger>
-      <TooltipPrimitive.Portal>
-        <TooltipPrimitive.Content side="top" align="start" sideOffset={6} avoidCollisions={false}
-          className={`${COMPOSER_PREVIEW_CLASS} w-fit max-w-60 break-words`}>
-          {label}
-        </TooltipPrimitive.Content>
-      </TooltipPrimitive.Portal>
+      <TooltipContent side="top" align="center">{label}</TooltipContent>
     </Tooltip>
   );
 }
