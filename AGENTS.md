@@ -1,5 +1,12 @@
 # Cebian Development Rules
 
+## Development Documentation
+
+- Put all documents created during development under the repository's `docs/` directory.
+- Do not place individual documents directly in `docs/`. Create or reuse a topic-specific subdirectory first (for example, `docs/architecture/`, `docs/features/`, `docs/decisions/`, `docs/guides/`, or `docs/testing/`).
+- Choose the subdirectory by document purpose, not by author or date. Keep related documents together and use clear file names.
+- When adding a new category, add it to `docs/guides/README.md` so the documentation remains navigable.
+
 These rules are the single source of truth for every AI coding agent working on this repo — Claude Code, GitHub Copilot, Codex, or anything else. Claude Code imports this file through `CLAUDE.md`; Copilot and Codex discover it directly. Edit the rules here, never in a platform adapter.
 
 Canonical Agent Skills live in `.agents/skills/`; `.claude/skills/` and `.github/skills/` contain platform adapters only. Invoke reusable workflows as `/<skill-name>` in Claude Code or Copilot and `$<skill-name>` in Codex. Reference skills such as `i18n-naming` and `shadcn` load on demand. Do not confuse these with the top-level `skills/` directory, which ships inside the extension as a product feature.

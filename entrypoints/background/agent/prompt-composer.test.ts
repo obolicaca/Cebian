@@ -1,8 +1,10 @@
+import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { buildSkillsBlock } from '@/lib/ai-config/scanner';
 import { memorySettings, userInstructions } from '@/lib/persistence/storage';
 import { composeSystemPrompt, composeUserMessage } from './prompt-composer';
+import { vfs } from '@/lib/persistence/vfs';
 
 // skills 索引扫描要读 VFS（IndexedDB），与本文件要验的「拼接 + 占位符替换」无关，
 // 故整模块打桩，让每个用例自己决定 skills 块内容。
@@ -115,5 +117,17 @@ describe('composeUserMessage', () => {
   it('既没提示词也没文本 → 请求块为空（维持旧行为）', async () => {
     const msg = await composeUserMessage('   ', [], false);
     expect(msg).toContain('<user-request>\n\n</user-request>');
+  });
+
+  it('同一轮组合两个 Skill、一个 Prompt 和共同任务', async () => {
+    const first = { name: 'compose-a', filePath: '~/.cebian/skills/compose-a/SKILL.md' };
+    const second = { name: 'compose-b', filePath: '~/.cebian/skills/compose-b/SKILL.md' };
+    await vfs.writeFile(first.filePath, '---\nname: compose-a\n---\nDo A.');
+    await vfs.writeFile(second.filePath, '---\nname: compose-b\n---\nDo B.');
+    const msg = await composeUserMessage('共同任务', [], false, { name: 'note', body: 'Use this format.' }, [first, second]);
+    expect(msg).toContain('<slash-prompt name="note">');
+    expect(msg).toContain('<selected-skills>');
+    expect(msg.indexOf('Do A.')).toBeLessThan(msg.indexOf('Do B.'));
+    expect(msg.endsWith('<user-request>\n共同任务\n</user-request>')).toBe(true);
   });
 });

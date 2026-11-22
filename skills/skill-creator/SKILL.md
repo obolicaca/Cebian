@@ -18,6 +18,12 @@ metadata:
 
 # Cebian skill-creator
 
+This browser-compatible workflow incorporates the Codex `skill-creator` idea
+of drafting, testing with realistic prompts, gathering feedback, and revising.
+Use Cebian's VFS and chat tools for those steps; Python scripts, local shell
+commands, Claude CLI, and subagent benchmarks from the Codex environment are
+not available inside the browser extension.
+
 A workflow for creating Cebian skills and improving them through iteration. The body below is the loop you follow; the L3 reference files are the facts you cite during each step.
 
 ## Hard rules

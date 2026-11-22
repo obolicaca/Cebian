@@ -18,6 +18,7 @@ import type { Api, AssistantMessage, Message, Model } from '@earendil-works/pi-a
 import { clampThinkingLevel } from '@earendil-works/pi-ai';
 import { createCebianAgent, requestPreamble, type AgentPreamble } from '../agent/factory';
 import { composeUserMessage, composeSystemPrompt } from '../agent/prompt-composer';
+import { resolveSelectedSkills, type SelectedSkill, type ResolvedSkill } from '@/lib/ai-config/selected-skills';
 import { discardRecordingHars, saveRecordingHars } from './recording-har';
 import type { SlashPrompt } from '@/lib/ai-config/slash-prompt';
 import { resolveProviderApiKey } from '../providers/credentials';
@@ -1035,12 +1036,16 @@ class SessionManager {
     turn?: TurnSettings,
     slashPrompt?: SlashPrompt,
     delivery?: FollowUpDelivery,
+    selectedSkills?: SelectedSkill[],
+    onAccepted?: () => void,
   ): Promise<boolean> {
     // 不带 delivery 却撞上一轮正在准备（典型：自动出队刚取走最后一条，页面看着空闲）：
     // 普通发送此刻必然与它撞车，改为排队。
     if ((delivery && this.isBusy(sessionId)) || (!delivery && this.pendingStarts.has(sessionId))) {
-      const prompt: QueuedPrompt = { id: crypto.randomUUID(), text, attachments, slashPrompt, turn: turn ?? {} };
+      if (selectedSkills?.length) await resolveSelectedSkills(selectedSkills);
+      const prompt: QueuedPrompt = { id: crypto.randomUUID(), text, attachments, slashPrompt, selectedSkills, turn: turn ?? {} };
       await this.acceptFollowUp(sessionId, prompt, delivery ?? 'queue');
+      onAccepted?.();
       return true;
     }
 
@@ -1049,7 +1054,10 @@ class SessionManager {
     const token = {};
     this.pendingStarts.set(sessionId, token);
     try {
-      return await this.startPrompt(sessionId, text, attachments, turn, slashPrompt);
+      // Validate after the synchronous gate, but before creating a session.
+      // Reuse this snapshot in the current dispatch to keep acceptance atomic.
+      const resolvedSkills = selectedSkills?.length ? await resolveSelectedSkills(selectedSkills) : [];
+      return await this.startPrompt(sessionId, text, attachments, turn, slashPrompt, selectedSkills, resolvedSkills, onAccepted);
     } finally {
       // 令牌还在 = 这次没跑起来（被取消、上下文到顶、撞上进行中的一轮、抛错）。会话就此
       // 空闲的话，队列里的消息没有收尾会来发，暂停交给用户处理。
@@ -1071,6 +1079,9 @@ class SessionManager {
     attachments: Attachment[],
     turn?: TurnSettings,
     slashPrompt?: SlashPrompt,
+    selectedSkills?: SelectedSkill[],
+    resolvedSkills?: ResolvedSkill[],
+    onAccepted?: () => void,
   ): Promise<boolean> {
     // Persist + broadcast 'session_created' for brand-new sessions BEFORE any
     // agent setup work (model resolve, tool factory, MCP, createAgent — easily
@@ -1210,7 +1221,7 @@ class SessionManager {
       // 本轮记忆开关的单一快照：同时喂给 user 消息注入与 system prompt 刷新，
       // 保证一轮内两处读同一个值（原子门控，避免读到两个快照而前后不一致）。
       const memoryEnabled = (await memorySettings.getValue()).enabled;
-      const enriched = await composeUserMessage(text, sentAttachments, memoryEnabled, slashPrompt);
+      const enriched = await composeUserMessage(text, sentAttachments, memoryEnabled, slashPrompt, selectedSkills, resolvedSkills);
 
       const images = extractImages(attachments);
 
@@ -1245,6 +1256,7 @@ class SessionManager {
         // Enqueue BEFORE cancelling so getSteeringMessages() sees it when the loop drains.
         handedOff = true;
         agentSession.agent.steer(userMessage);
+        onAccepted?.();
         agentSession.toolCtx.cancelAll();
         agentSession.permissionBridge.cancel();
       } else {
@@ -1280,13 +1292,16 @@ class SessionManager {
           // 销毁时则没有提交，以消息是否真的在转录里为准
           if (cancelled) {
             handedOff = agentSession.agent.state.messages.includes(pendingUserMessage);
+            if (handedOff) onAccepted?.();
             return handedOff;
           }
         }
         // 进行中的一轮还没结束（过期的 IPC）时下面的 prompt 会同步抛错，消息不进转录。判断与
         // 调用之间不能有 await，否则那一轮可能恰好结束，这条消息就带着已删掉的 HAR 发出去
         handedOff = !agentSession.agent.state.isStreaming;
-        await agentSession.agent.prompt(enriched, images.length > 0 ? images : undefined);
+        const run = agentSession.agent.prompt(enriched, images.length > 0 ? images : undefined);
+        onAccepted?.();
+        await run;
       }
     } finally {
       if (!handedOff) await discardRecordingHars(sessionId, writtenHars);
@@ -1379,7 +1394,7 @@ class SessionManager {
     let steered = false;
     try {
       const memoryEnabled = (await memorySettings.getValue()).enabled;
-      const enriched = await composeUserMessage(prompt.text, sentAttachments, memoryEnabled, prompt.slashPrompt);
+      const enriched = await composeUserMessage(prompt.text, sentAttachments, memoryEnabled, prompt.slashPrompt, prompt.selectedSkills);
       if (!this.canSteer(agentSession)) return false;
       const content: any[] = [{ type: 'text', text: enriched }];
       content.push(...extractImages(prompt.attachments));
@@ -1442,7 +1457,7 @@ class SessionManager {
   private async dispatchQueued(sessionId: string, prompt: QueuedPrompt): Promise<void> {
     let handedOff = false;
     try {
-      handedOff = await this.prompt(sessionId, prompt.text, prompt.attachments, prompt.turn, prompt.slashPrompt);
+      handedOff = await this.prompt(sessionId, prompt.text, prompt.attachments, prompt.turn, prompt.slashPrompt, undefined, prompt.selectedSkills);
     } catch (err) {
       broadcastToViewers(sessionId, {
         type: 'error',
@@ -1774,6 +1789,17 @@ class SessionManager {
       // 按本模型实际发出的提示词与工具估算（关掉工具调用的模型不声明工具、多一段说明）
       ...requestPreamble(agentSession.preamble, state.model),
     });
+  }
+
+  async tabReferenceBudget(sessionId: string, model: ModelIdentity | undefined, request: string): Promise<number> {
+    const session = this.sessions.get(sessionId);
+    const usage = session ? await this.currentContextUsage(session) : undefined;
+    const resolved = model || !usage ? await this.resolveSessionModel(model) : null;
+    const contextWindow = resolved?.model.contextWindow ?? usage?.contextWindow ?? 0;
+    if (!contextWindow) return 16000;
+    const reserve = Math.min(8192, Math.floor(contextWindow / 4));
+    const remaining = contextWindow - (usage?.tokens ?? reserve) - reserve - request.length;
+    return Math.min(16000, Math.max(0, remaining));
   }
 
   /**

@@ -1,4 +1,4 @@
-﻿# Cebian 擴充功能 i18n —— 繁體中文（zh_TW，台灣/港澳使用者）。
+# Cebian 擴充功能 i18n —— 繁體中文（zh_TW，台灣/港澳使用者）。
 # 修改時請同步 locales/en.yml 與 locales/zh_CN.yml。規範見 .claude/skills/i18n-naming/SKILL.md。
 
 # ─── Manifest（扁平頂層 key，見規範「Manifest localization」）───
@@ -618,7 +618,7 @@ settings:
 # ─── 聊天 ───
 chat:
   composer:
-    placeholder: "輸入 / 查看命令…"
+    placeholder: "輸入訊息，按@選擇分頁，或按/呼叫技能"
     pickElement: "選擇元素"
     cancelPick: "取消選擇"
     screenshot: "螢幕截圖"
@@ -649,8 +649,23 @@ chat:
     dropFiles: "放開以新增附件"
     modelNoImage: "當前模型不支援多模態輸入"
     imageStripped: "已移除圖片附件——當前模型不支援多模態輸入"
-    noPrompts: "尚無 Prompt，前往 AI 設定建立"
     noMatch: "無相符結果"
+    skillUnavailable: "Skill 無法使用"
+    # $1 = Skill 名
+    selectTabs: "選擇分頁"
+    tabListTitle: "分頁"
+    searchTabs: "搜尋分頁"
+    noTabs: "沒有符合的分頁"
+    tabUnavailable: "無法使用"
+    tabClosed: "分頁已關閉"
+    tabChanged: "頁面已變更"
+    tabReadFailed: "讀取頁面失敗"
+    tabReferenced: "已引用"
+    removeSkillReference: "移除 Skill：$1"
+    removeTabReference: "移除網頁引用：$1"
+    tabPreviewUnavailable: "暫無頁面簡介"
+    tabBudget: "上下文不足，請減少引用分頁"
+    skillPillTitle: "Skill $1（按退格刪除）"
     stop: "停止"
     # 智慧型代理工作時傳送訊息（issue #96）
     followUp:

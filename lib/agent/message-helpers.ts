@@ -10,6 +10,7 @@ import type {
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { unescapeXml } from '@/lib/utils';
 import { SLASH_PROMPT_ONLY_REQUEST } from '@/lib/ai-config/slash-prompt';
+import { SELECTED_SKILLS_ONLY_REQUEST } from '@/lib/ai-config/selected-skills';
 import { USER_REQUEST_CLOSE, USER_REQUEST_OPEN, wrapUserRequest } from '@/lib/agent/prompt-envelope';
 import type { NetworkCaptureState } from '@/lib/recorder/network-types';
 
@@ -133,7 +134,16 @@ export function extractUserText(msg: Message): string {
   // 历史里都看不到它）——概率可以忽略，且代价只是少显示一行，不值得为它把「没打字」
   // 这个信号改成一个用户敲不出来的结构标记。
   if (text === SLASH_PROMPT_ONLY_REQUEST && SLASH_PROMPT_RE.test(raw)) return '';
+  if (text === SELECTED_SKILLS_ONLY_REQUEST && raw.includes('<selected-skills>')) return '';
   return text;
+}
+
+/** Names are stored in the structured user message and survive session reload. */
+export function extractSelectedSkillNames(msg: Message): string[] {
+  if (msg.role !== 'user') return [];
+  const raw = getRawUserText(msg);
+  const block = raw.match(/<selected-skills>([\s\S]*?)<\/selected-skills>/)?.[1] ?? '';
+  return [...block.matchAll(/<skill name="([^"]*)"/g)].map((match) => unescapeXml(match[1]));
 }
 
 /** 取出这一轮携带的斜杠提示词（名字 + 正文），没有则返回 null。

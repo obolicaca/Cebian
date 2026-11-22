@@ -1,4 +1,4 @@
-﻿# Cebian extension i18n — English (default).
+# Cebian extension i18n — English (default).
 # Edit this file along with locales/zh_CN.yml and locales/zh_TW.yml.
 # See .claude/skills/i18n-naming/SKILL.md.
 
@@ -623,7 +623,7 @@ settings:
 # ─── Chat surface ───
 chat:
   composer:
-    placeholder: "Type '/' for commands…"
+    placeholder: "Type a message, press @ to select tabs, or / to invoke a skill"
     pickElement: "Pick element"
     cancelPick: "Cancel pick"
     screenshot: "Screenshot"
@@ -654,8 +654,23 @@ chat:
     dropFiles: "Drop to attach files"
     modelNoImage: "Current model doesn't support multimodal input"
     imageStripped: "Removed image attachments — the current model doesn't support multimodal input"
-    noPrompts: "No prompts yet — create one from AI config"
     noMatch: "No matches"
+    skillUnavailable: "Skill unavailable"
+    # $1 = Skill name
+    selectTabs: "Select tabs"
+    tabListTitle: "Tabs"
+    searchTabs: "Search tabs"
+    noTabs: "No matching tabs"
+    tabUnavailable: "Unavailable"
+    tabClosed: "Tab closed"
+    tabChanged: "Page changed"
+    tabReadFailed: "Could not read page"
+    tabReferenced: "Already referenced"
+    removeSkillReference: "Remove Skill: $1"
+    removeTabReference: "Remove page reference: $1"
+    tabPreviewUnavailable: "Page description unavailable"
+    tabBudget: "Not enough context for all pages"
+    skillPillTitle: "Skill $1 — press Backspace to remove"
     stop: "Stop"
     # Sending while the agent is working (issue #96)
     followUp:

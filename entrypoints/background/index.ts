@@ -17,6 +17,7 @@ import { SUPPRESS_KIND } from '@/lib/page-actions/types';
 import { isRecorderRuntimeMessage, RECORDER_MSG_KIND, type RecorderControlMessage } from '@/lib/recorder/protocol';
 import { isInjectablePage } from '@/lib/browser/tab-actions';
 import { setupUpdateNotice } from './lifecycle/update-notice';
+import { setupDefaultSkills } from './lifecycle/default-skills';
 import { setupPortRegistry } from './ipc/port-registry';
 import { setupClientRouter } from './ipc/client-router';
 import { followLanguagePreference, initI18n } from '@/lib/i18n';
@@ -38,6 +39,7 @@ export default defineBackground(() => {
 
   // 扩展升级后记下新版本号，供侧边栏下次打开时弹出更新日志。
   setupUpdateNotice();
+  setupDefaultSkills();
 
   // 注册备份 IPC 响应器（会话采集 / 写回；Dexie 唯一写者经此转发）。
   registerBackupHandler();

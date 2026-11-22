@@ -1,3 +1,6 @@
+import { snapshotTabReferences, TabReferenceError } from '../agent/tab-references';
+import { findTabReferences } from '@/lib/agent/tab-references';
+
 // chat 域的客户端消息 handler：会话订阅 / 发送 / 取消 / 重试 / 工具与授权裁决 /
 // 历史列表、删除、分叉与改名，以及「最后一个 viewer 断连后延迟取消 agent」的 grace-cancel 策略。
 //
@@ -171,10 +174,30 @@ const chatClientHandlers: ClientHandlerMap = {
     // model / thinkingLevel 是本轮携带的「该会话所用模型 / 思考档」，透传给
     // prompt() 作 override（B1：会话行是真相，全局仅作新对话种子）。
     // delivery：页面认为会话正忙时携带，后台据此排队或插话（issue #96）。
-    sessionManager.prompt(sessionId, msg.text, msg.attachments, {
+    let acknowledged = false;
+    const accept = msg.requestId ? () => {
+      acknowledged = true;
+      post(port, { type: 'prompt_ack', requestId: msg.requestId!, accepted: true });
+    } : undefined;
+    const prepare = async () => {
+      if (!findTabReferences(msg.text).length) return msg.text;
+      const budget = await sessionManager.tabReferenceBudget(sessionId, msg.model, msg.text);
+      const { request, context } = await snapshotTabReferences(msg.text, budget);
+      return request + '\n<tab-reference-data>' + context + '</tab-reference-data>';
+    };
+    prepare().then((text) => sessionManager.prompt(sessionId, text, msg.attachments, {
       model: msg.model,
       thinkingLevel: msg.thinkingLevel,
-    }, msg.slashPrompt, msg.delivery).catch((err) => postPromptError(port, sessionId, err));
+    }, msg.slashPrompt, msg.delivery, msg.selectedSkills, accept)).then((accepted) => {
+      if (!accepted && msg.requestId && !acknowledged) post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, error: 'Message was not accepted' });
+    }).catch((err) => {
+      if (msg.requestId && err instanceof TabReferenceError) {
+        post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, tabFailure: { ids: err.ids, reason: err.reason } });
+        return;
+      }
+      if (msg.requestId && !acknowledged) post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, error: err instanceof Error ? err.message : String(err) });
+      postPromptError(port, sessionId, err);
+    });
   },
 
   queue_remove(_port, msg) {

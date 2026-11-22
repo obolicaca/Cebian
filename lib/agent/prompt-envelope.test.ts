@@ -12,6 +12,8 @@ const EXPECTED_TAGS = [
   'memories',
   'user_profile',
   'slash-prompt',
+  'selected-skills',
+  'tab-reference-data',
   'user-request',
 ] as const;
 

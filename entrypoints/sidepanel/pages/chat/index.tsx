@@ -44,6 +44,7 @@ import { lastSelectedModel, lastSelectedThinkingLevel as thinkingLevelStorage, p
 import { hasUsableModel } from '@/lib/providers/usable-models';
 import type { Attachment } from '@/lib/agent/attachments';
 import type { SlashPrompt } from '@/lib/ai-config/slash-prompt';
+import type { SelectedSkill } from '@/lib/ai-config/selected-skills';
 import type { SessionSnapshot } from '@/lib/ipc/protocol';
 import { t } from '@/lib/i18n';
 
@@ -231,6 +232,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
       expectedSessionId: string | null,
       slashPrompt: SlashPrompt | undefined,
       delivery: FollowUpDelivery | undefined,
+      selectedSkills: SelectedSkill[] | undefined,
     ) => {
       // 切换到已有会话但其会话行尚未加载完（sessionLoading）时拒绝派发：此刻
       // turnModel 还是上一个会话的本地草稿，若此时发送会把旧模型携带给新会话、
@@ -241,7 +243,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
       const result = await send(text, attachments, expectedSessionId, {
         model: turnModel ?? undefined,
         thinkingLevel: turnThinking,
-      }, slashPrompt, delivery);
+      }, slashPrompt, delivery, selectedSkills);
       // 排队 / 插话的消息此刻还不在对话里，不必拉到底
       if (result.status === 'dispatched' && !delivery) {
         scrollToBottom({ force: true });

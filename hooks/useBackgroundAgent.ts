@@ -1,3 +1,5 @@
+import { findTabReferences } from '@/lib/agent/tab-references';
+
 // Hook: connects sidepanel to the background session manager via chrome.runtime Port.
 // Replaces useAgentLifecycle + useSessionManager.
 
@@ -18,6 +20,7 @@ import {
 import type { Attachment } from '@/lib/agent/attachments';
 import type { FollowUpDelivery } from '@/lib/persistence/storage';
 import { buildSlashPromptBlock, type SlashPrompt } from '@/lib/ai-config/slash-prompt';
+import { buildSelectedSkillNamesBlock, SELECTED_SKILLS_ONLY_REQUEST, type SelectedSkill } from '@/lib/ai-config/selected-skills';
 import { wrapUserRequest } from '@/lib/agent/prompt-envelope';
 import { applyStreamOps } from '@/lib/agent/stream-replica';
 import type { PermissionRequest } from '@/lib/agent/tool-permissions';
@@ -65,8 +68,8 @@ export interface PendingToolInfo {
 // UI 需要时直接从那里 import；本 hook 仅在内部按 toolCallId 维护活 pending。
 
 export type PromptDispatchResult =
-  | { status: 'dispatched' }
-  | { status: 'notDispatched'; reason: 'empty' | 'unavailable' };
+  | { status: 'dispatched'; sessionId?: string | null }
+  | { status: 'notDispatched'; reason: 'empty' | 'unavailable'; tabFailure?: { ids: string[]; reason: string } };
 
 /** 取回一条排队消息的结果：`gone` = 已不在队列（已发出 / 被别的窗口取走或删除），
  *  `unavailable` = 没连上后台或等回包时端口断了。 */
@@ -116,6 +119,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest>>(new Map());
 
   const portRef = useRef<chrome.runtime.Port | null>(null);
+  const promptAcksRef = useRef(new Map<string, (accepted: boolean, tabFailure?: { ids: string[]; reason: string }) => void>());
   const sessionIdRef = useRef<string | null>(null);
   // 分叉在途标记（issue #60）：分叉要复制树路径与整个工作区、不是瞬时的，而按钮没有
   // 乐观隐藏，双击会建出两个副本。回包（成功 / 失败）或端口断开时清掉。
@@ -164,6 +168,13 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       const isCurrentSession = (sessionId: string | null | undefined) =>
         sessionId != null && sessionId === sessionIdRef.current;
       switch (msg.type) {
+        case 'prompt_ack': {
+          const resolve = promptAcksRef.current.get(msg.requestId);
+          promptAcksRef.current.delete(msg.requestId);
+          resolve?.(msg.accepted, msg.tabFailure);
+          if (!msg.accepted && msg.error) toast.error(msg.error);
+          break;
+        }
         case 'connected': {
           retryCount = 0;
           // 新端口上不可能收到旧端口的分叉回包：无论旧端口是怎么失效的（onDisconnect
@@ -544,6 +555,9 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     turn?: TurnSettings,
     slashPrompt?: SlashPrompt,
     delivery?: FollowUpDelivery,
+    selectedSkills?: SelectedSkill[],
+    requestId?: string,
+    sessionIdHint?: string,
   ): boolean => {
     if (sessionIdRef.current !== expectedSessionId) return false;
 
@@ -551,10 +565,10 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     if (!port) return false;
 
     const existingSessionId = sessionIdRef.current;
-    const sessionId = existingSessionId ?? crypto.randomUUID();
+    const sessionId = existingSessionId ?? sessionIdHint ?? crypto.randomUUID();
 
     try {
-      port.postMessage({ type: 'prompt', sessionId, text, attachments, slashPrompt, delivery, model: turn?.model, thinkingLevel: turn?.thinkingLevel });
+      port.postMessage({ type: 'prompt', sessionId, text, attachments, slashPrompt, selectedSkills, requestId, delivery, model: turn?.model, thinkingLevel: turn?.thinkingLevel });
     } catch {
       if (portRef.current === port) {
         portRef.current = null;
@@ -574,7 +588,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
 
     // 排队 / 插话：消息进后台队列，以 queue_updated 显示在输入框上方；真正进转录时才出现在
     // 对话里，所以这里不加乐观气泡、也不动运行态
-    if (delivery) return true;
+    if (delivery || requestId) return true;
 
     // Optimistically add user message to local state for immediate UI feedback
     setState(prev => {
@@ -584,10 +598,8 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       // 请求块**无条件**包：不包的话这条消息是「裸文本」，用户自己打的字里若出现字面量
       // `<user-request>`，乐观态与广播态会解析出不同的结果。提示词块则在带了提示词时才包，
       // 否则只挂了提示词、没打字的那一轮会渲染成彻底空白（连气泡都没有），像消息发丢了。
-      const request = wrapUserRequest(text.trim());
-      const optimisticText = slashPrompt
-        ? `${buildSlashPromptBlock(slashPrompt)}\n\n${request}`
-        : request;
+      const request = wrapUserRequest(text.trim() || (selectedSkills?.length ? SELECTED_SKILLS_ONLY_REQUEST : ''));
+      const optimisticText = [slashPrompt ? buildSlashPromptBlock(slashPrompt) : '', selectedSkills?.length ? buildSelectedSkillNamesBlock(selectedSkills) : '', request].filter(Boolean).join('\n\n');
       const content: any[] = [{ type: 'text' as const, text: optimisticText }];
       // Include image attachments in optimistic message for preview
       if (attachments) {
@@ -616,13 +628,35 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     turn?: TurnSettings,
     slashPrompt?: SlashPrompt,
     delivery?: FollowUpDelivery,
+    selectedSkills?: SelectedSkill[],
   ): Promise<PromptDispatchResult> => {
     const trimmed = text.trim();
     // 挂了斜杠提示词时空文本也算有内容——提示词本身就是这一轮的请求（issue #53）。
-    if (!trimmed && !slashPrompt) return { status: 'notDispatched', reason: 'empty' };
+    if (!trimmed && !slashPrompt && !selectedSkills?.length) return { status: 'notDispatched', reason: 'empty' };
 
     const startedSessionId = expectedSessionId;
-    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery)) return { status: 'dispatched' };
+    const requestId = selectedSkills?.length || findTabReferences(trimmed).length ? crypto.randomUUID() : undefined;
+    const pendingSessionId = startedSessionId ?? (requestId ? crypto.randomUUID() : undefined);
+    const waitForAck = (): Promise<PromptDispatchResult> => {
+      if (!requestId) return Promise.resolve({ status: 'dispatched', sessionId: startedSessionId });
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          promptAcksRef.current.delete(requestId);
+          resolve({ status: 'notDispatched', reason: 'unavailable' });
+        }, 5 * 60_000);
+        promptAcksRef.current.set(requestId, (accepted, tabFailure) => {
+          clearTimeout(timeout);
+          if (!accepted && startedSessionId === null && sessionIdRef.current === pendingSessionId) sessionIdRef.current = null;
+          resolve(accepted ? { status: 'dispatched', sessionId: pendingSessionId ?? startedSessionId } : { status: 'notDispatched', reason: 'unavailable', tabFailure });
+        });
+      });
+    };
+    let ack = waitForAck();
+    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery, selectedSkills, requestId, pendingSessionId)) return ack;
+    if (requestId) {
+      promptAcksRef.current.get(requestId)?.(false);
+      promptAcksRef.current.delete(requestId);
+    }
 
     const connected = await waitForConnected(PROMPT_RECONNECT_TIMEOUT_MS);
     if (!connected || sessionIdRef.current !== startedSessionId) {
@@ -632,7 +666,12 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       return { status: 'notDispatched', reason: 'unavailable' };
     }
 
-    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery)) return { status: 'dispatched' };
+    ack = waitForAck();
+    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery, selectedSkills, requestId, pendingSessionId)) return ack;
+    if (requestId) {
+      promptAcksRef.current.get(requestId)?.(false);
+      promptAcksRef.current.delete(requestId);
+    }
 
     setState(prev => ({ ...prev, lastError: t('chat.session.notConnected') }));
     return { status: 'notDispatched', reason: 'unavailable' };

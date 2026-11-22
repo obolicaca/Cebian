@@ -1,4 +1,4 @@
-﻿# Cebian 扩展 i18n —— 简体中文（zh_CN，大陆用户）。
+# Cebian 扩展 i18n —— 简体中文（zh_CN，大陆用户）。
 # 修改时请同步 locales/en.yml 与 locales/zh_TW.yml。规范见 .claude/skills/i18n-naming/SKILL.md。
 
 # ─── Manifest（扁平顶层 key，见规范"Manifest localization"）───
@@ -618,7 +618,7 @@ settings:
 # ─── 聊天 ───
 chat:
   composer:
-    placeholder: "输入 / 查看命令…"
+    placeholder: "输入消息，按@选择标签页，或按/调用技能"
     pickElement: "选择元素"
     cancelPick: "取消选择"
     screenshot: "截图"
@@ -649,8 +649,23 @@ chat:
     dropFiles: "松开以添加附件"
     modelNoImage: "当前模型不支持多模态输入"
     imageStripped: "已移除图片附件——当前模型不支持多模态输入"
-    noPrompts: "暂无 Prompt，前往 AI 配置创建"
     noMatch: "无匹配结果"
+    skillUnavailable: "Skill 不可用"
+    # $1 = Skill 名
+    selectTabs: "选择标签页"
+    tabListTitle: "标签页"
+    searchTabs: "搜索标签页"
+    noTabs: "没有匹配的标签页"
+    tabUnavailable: "不可用"
+    tabClosed: "标签页已关闭"
+    tabChanged: "页面已变更"
+    tabReadFailed: "读取页面失败"
+    tabReferenced: "已引用"
+    removeSkillReference: "移除 Skill：$1"
+    removeTabReference: "移除网页引用：$1"
+    tabPreviewUnavailable: "暂无页面简介"
+    tabBudget: "上下文不足，请减少引用页面"
+    skillPillTitle: "Skill $1（按退格删除）"
     stop: "停止"
     # 智能体工作时发送消息（issue #96）
     followUp:

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import type { QueuedPromptView } from '@/lib/ipc/protocol';
 import { oneLine } from '@/lib/utils';
 import { t } from '@/lib/i18n';
+import { describeTabReferences } from '@/lib/agent/tab-references';
 
 interface QueuedMessagesProps {
   queue: QueuedPromptView[];
@@ -17,7 +18,7 @@ interface QueuedMessagesProps {
 
 /** 一条排队消息的单行预览：没打字只挂了斜杠提示词时显示 `/名字`。 */
 function previewText(item: QueuedPromptView): string {
-  const text = oneLine(item.text);
+  const text = oneLine(describeTabReferences(item.text));
   if (!item.slashPromptName) return text;
   return text ? `/${item.slashPromptName} ${text}` : `/${item.slashPromptName}`;
 }
@@ -45,7 +46,7 @@ function QueuedMessages({ queue, paused, disabled, onSendNow, onEdit, onRemove }
                 className={`size-3.5 shrink-0 ${steering ? 'text-primary' : 'text-muted-foreground'}`}
                 {...(steering ? { 'aria-hidden': true } : { 'aria-label': t('chat.composer.queue.queued') })}
               />
-              <span className="min-w-0 flex-1 truncate" title={item.text}>{previewText(item)}</span>
+              <span className="min-w-0 flex-1 truncate" title={previewText(item)}>{previewText(item)}</span>
               {item.attachmentCount > 0 && (
                 <span
                   className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground"

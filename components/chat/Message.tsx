@@ -1,21 +1,37 @@
 import { Bot, ChevronLeft, ChevronRight, Lightbulb, CheckCircle, Crosshair, FileText, Film, FoldVertical, Network, Pencil, Scissors, ShieldAlert } from 'lucide-react';
-import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CopyButton } from '@/components/common/CopyButton';
 import { MarkdownRenderer } from '@/components/common/MarkdownRenderer';
 import { MessageMetaRow, type MessageMetaProps } from '@/components/chat/MessageMetaRow';
-import { extractUserText, extractUserAttachments, extractSlashPrompt } from '@/lib/agent/message-helpers';
+import { extractUserText, extractUserAttachments, extractSlashPrompt, extractSelectedSkillNames } from '@/lib/agent/message-helpers';
+import { compactTabText, describeTabReferences, findTabReferences, tabLink, type TabReference } from '@/lib/agent/tab-references';
+import { attachTabPreview, TAB_PILL_LAYOUT } from './tab-preview';
 import { showDialog } from '@/lib/ui/dialog';
 import { RECORDING_MIME } from '@/lib/agent/attachments';
 import { t } from '@/lib/i18n';
 import { describePermission } from '@/lib/agent/tool-permissions';
 import { downloadFile } from '@/lib/utils';
 import { recordingMetaText, recordingTitle } from '@/components/chat/recording-meta';
+import { SkillPill } from '@/components/chat/SkillPill';
 import { RECORDING_HAR_DIR } from '@/lib/recorder/constants';
 import { browser } from 'wxt/browser';
 import type { Message } from '@earendil-works/pi-ai';
+
+
+const HistoryTabPill = memo(function HistoryTabPill({ reference }: { reference: TabReference }) {
+  return (
+    <a href={tabLink(reference.url)} target="_blank" rel="noopener noreferrer"
+      className={TAB_PILL_LAYOUT + ' rounded-md bg-primary/10 px-1.5 text-primary'}
+      aria-label={reference.title} data-tab-reference="true"
+      ref={(anchor) => anchor ? attachTabPreview(anchor, reference) : undefined}>
+      @{compactTabText(reference.title, 28)}
+    </a>
+  );
+}, ({ reference: a }, { reference: b }) =>
+  a.title === b.title && a.url === b.url && a.tabId === b.tabId && a.summary === b.summary);
 
 /* ─── Branch switcher ─── */
 
@@ -100,6 +116,7 @@ export function UserMessageBubble({
 }) {
   const text = msg ? extractUserText(msg) : null;
   const slashPrompt = useMemo(() => msg ? extractSlashPrompt(msg) : null, [msg]);
+  const selectedSkillNames = useMemo(() => msg ? extractSelectedSkillNames(msg) : [], [msg]);
   const attachments = useMemo(() => msg ? extractUserAttachments(msg) : null, [msg]);
   const hasAttachments = attachments && (attachments.images.length > 0 || attachments.elements.length > 0 || attachments.files.length > 0 || attachments.recordings.length > 0);
 
@@ -167,16 +184,29 @@ export function UserMessageBubble({
   // 它本来就是这一轮消息的一部分，不值得为它单开一块 UI。正文（模板展开后的那一大段）
   // 不在气泡里露出：气泡只显示用户看得懂、也确实「打过」的那几个字。
   const slashText = slashPrompt ? `/${slashPrompt.name}` : null;
-  const bubbleText = slashText ? (text ? `${slashText} ${text}` : slashText) : text;
-  const bubble = bubbleText ?? children;
-  // 一个字没打、也没挂提示词的空消息不渲染气泡框，免得留一个空壳。
-  const hasBubble = typeof bubble === 'string' ? bubble.length > 0 : bubble != null;
+  const bubbleText = [slashText, text].filter(Boolean).join(' ');
+  let tabCursor = 0;
+  const bubbleParts = findTabReferences(bubbleText).flatMap(({ ref, from, to }) => {
+    const preceding = bubbleText.slice(tabCursor, from);
+    tabCursor = to;
+    return [preceding, <HistoryTabPill key={ref.id} reference={ref} />];
+  });
+  bubbleParts.push(bubbleText.slice(tabCursor));
+  // Skill 引用以 pill 形式嵌在气泡文字流里（与输入框一致）；复制时还原成 `/名字` 文本。
+  const copyText = [...selectedSkillNames.map((name) => `/${name}`), describeTabReferences(bubbleText)].filter(Boolean).join(' ');
+  // 一个字没打、也没挂提示词 / Skill 的空消息不渲染气泡框，免得留一个空壳。
+  const hasBubble = bubbleText.length > 0 || selectedSkillNames.length > 0 || children != null;
 
   return (
     <div className="self-end max-w-[95%] group/user">
       {hasBubble && (
         <div className="bg-card border border-border px-4 py-3 rounded-2xl chat-text-body chat-font leading-relaxed w-fit ml-auto whitespace-pre-wrap break-all">
-          {bubble}
+          {selectedSkillNames.map((name) => (
+            <span key={name} className="mr-1.5 inline-flex">
+              <SkillPill name={name} />
+            </span>
+          ))}
+          {bubbleText.length > 0 ? bubbleParts : children}
         </div>
       )}
 
@@ -265,7 +295,7 @@ export function UserMessageBubble({
               * `hasBubble` 为真时它必然非空，空消息也就不会给出一个「复制了空字符串」
               * 的假成功。
               */}
-            {hasBubble && <CopyButton text={bubbleText ?? ''} />}
+            {hasBubble && <CopyButton text={copyText} />}
             {onEdit && (
               <Tooltip>
                 <TooltipTrigger asChild>

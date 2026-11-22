@@ -47,3 +47,6 @@ site/mockup/
 
 # 本地临时产物（patch 等）
 /tmp/
+
+# 本地浏览器测试基础设施（含测试凭据与临时 profile，绝不入库）
+.scratch/

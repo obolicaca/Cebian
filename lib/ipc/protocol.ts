@@ -21,6 +21,7 @@ import type { SessionPlacement, SessionRecord } from '@/lib/persistence/db';
 import type { FollowUpDelivery, ModelIdentity, ThinkingLevel } from '@/lib/persistence/storage';
 import type { Attachment } from '@/lib/agent/attachments';
 import type { SlashPrompt } from '@/lib/ai-config/slash-prompt';
+import type { SelectedSkill } from '@/lib/ai-config/selected-skills';
 import type { RecordedSession, RecorderOptions } from '@/lib/recorder/types';
 import type { NetworkCaptureState } from '@/lib/recorder/network-types';
 import type { MCPResourceContents } from '@/lib/mcp/client';
@@ -62,6 +63,7 @@ export interface QueuedPrompt {
   text: string;
   attachments: Attachment[];
   slashPrompt?: SlashPrompt;
+  selectedSkills?: SelectedSkill[];
   turn: TurnSettings;
 }
 
@@ -86,6 +88,7 @@ export type ClientMessage =
    *  缺省时后台回退到全局 lastSelectedModel 充当「新对话默认种子」（向后兼容）。 */
   | ({
       type: 'prompt';
+      requestId?: string;
       sessionId: string | null;
       text: string;
       attachments?: Attachment[];
@@ -93,6 +96,7 @@ export type ClientMessage =
        *  UI 传而非后台按名字回读文件：模板变量要 chrome.tabs / scripting / 剪贴板，
        *  是侧边栏专有能力，后台引不得（见 lib/ai-config/template-vars-sidepanel.ts）。 */
       slashPrompt?: SlashPrompt;
+      selectedSkills?: SelectedSkill[];
       /** 任务运行中发送时的交付方式（issue #96）：排队或插话。只在页面认为会话正忙时
        *  携带；后台到达时会话已空闲则按普通发送处理。缺省 = 旧语义。 */
       delivery?: FollowUpDelivery;
@@ -268,6 +272,7 @@ export type SessionMeta = Omit<SessionRecord, 'messages'> & {
 
 export type ServerMessage =
   | { type: 'connected' }
+  | { type: 'prompt_ack'; requestId: string; accepted: boolean; error?: string; tabFailure?: { ids: string[]; reason: string } }
   | {
       type: 'session_state';
       sessionId: string;

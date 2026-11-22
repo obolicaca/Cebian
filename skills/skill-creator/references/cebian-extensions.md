@@ -110,7 +110,7 @@ metadata:
     └── assets/          ← optional, templates / fixtures
 ```
 
-The path `~/.cebian/skills/<name>/SKILL.md` is the canonical entry. Every skill must have a `SKILL.md` at that exact location; the scanner ignores anything else at the top level. Cebian itself never writes into `~/.cebian/skills/` — the directory belongs entirely to the user.
+The path `~/.cebian/skills/<name>/SKILL.md` is the canonical entry. Every skill must have a `SKILL.md` at that exact location; the scanner ignores anything else at the top level. Cebian installs the bundled `skill-creator` and `find-skills` packages when the extension is installed, and fills in a missing package on upgrade. Existing `SKILL.md` files and user changes are never overwritten by this installer; all other Skill directories belong to the user.
 
 ## Index caching
 

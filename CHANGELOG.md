@@ -20,8 +20,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### 新增 / Added
 
+- 侧边栏输入框支持通过 `/` 搜索并调用已安装的 Skill，可在同一条消息中选择多个 Skill，并与一个 Prompt 组合使用
+- 通过 `@` 跨窗口引用多个标签页，与提问和 Skill 胶囊混排。发送时读取正文，追问和重试可复用已保存的页面快照
+- 标签页和 Skill 的选择菜单标记已选项。草稿中的胶囊可悬停查看简短介绍，也可点击叉号移除
+- 插件安装或更新时提供默认的 `skill-creator` 和 `find-skills`
 - 新增模型：Claude Fable 5.2（Anthropic、GitHub Copilot、OpenRouter、Vercel AI Gateway），GPT-6.2 Astra 与 GPT-6.2 Sol（OpenAI、OpenAI Codex、GitHub Copilot、OpenRouter、Vercel AI Gateway），Gemini 4 Carbon / Hydrogen / Neon（Google、GitHub Copilot、OpenRouter、Vercel AI Gateway），GitHub Copilot 的 MAI Code 2 与 MAI Code 2 Flash，OpenAI 的 GPT-6 Cyber，Kimi K3.1 Pro（Fireworks、Hugging Face、Together），Qwen4 Max（OpenRouter、Vercel AI Gateway）；其余提供商的内置模型列表也同步到了最新
 
+- The side panel composer now searches and invokes installed Skills with `/`, supports multiple Skills in one message, and can combine them with one Prompt
+- Reference tabs across browser windows with `@`, alongside message text and Skill chips. Page content is captured on send and can be reused for follow-ups and retries
+- Tab and Skill pickers mark references already in the draft. Hover over a draft chip for a short preview or click its remove button
+- Install or update Cebian to get the bundled `skill-creator` and `find-skills`
 - Added models: Claude Fable 5.2 (Anthropic, GitHub Copilot, OpenRouter, Vercel AI Gateway), GPT-6.2 Astra and GPT-6.2 Sol (OpenAI, OpenAI Codex, GitHub Copilot, OpenRouter, Vercel AI Gateway), Gemini 4 Carbon / Hydrogen / Neon (Google, GitHub Copilot, OpenRouter, Vercel AI Gateway), MAI Code 2 and MAI Code 2 Flash on GitHub Copilot, GPT-6 Cyber on OpenAI, Kimi K3.1 Pro (Fireworks, Hugging Face, Together), and Qwen4 Max (OpenRouter, Vercel AI Gateway); the built-in model lists of the other providers are refreshed too
 
 ### 变更 / Changed
