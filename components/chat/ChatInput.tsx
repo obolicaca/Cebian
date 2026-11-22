@@ -1,3 +1,4 @@
+import { ComposerAddMenu } from './ComposerAddMenu';
 import type { ComposerDisplay } from '@/lib/agent/composer-display';
 import { useState, useRef, useEffect, useMemo, useCallback, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react';
 import { AtSign, Box, Check, Globe, Send, Square, MousePointer2, Camera, Paperclip, Smartphone, Crosshair, FileText, X, Film, Network, ListPlus, CornerDownRight } from 'lucide-react';
@@ -24,7 +25,7 @@ import { startElementPicker, cancelElementPicker } from '@/lib/browser/element-p
 import { scanPrompts, scanSkillIndex, type PromptMeta, type SkillMeta } from '@/lib/ai-config/scanner';
 import { resolveSelectedSkills, type SelectedSkill } from '@/lib/ai-config/selected-skills';
 import { findPromptTokens, findSkillTokens, findSlashToken, stripSkillTokens, tokensToSkills, type SlashToken } from '@/lib/ai-config/skill-tokens';
-import { quoteToken } from '@/lib/agent/quote-tokens';
+import { findQuoteTokens, quoteToken } from '@/lib/agent/quote-tokens';
 import { ComposerEditor, type ComposerEditorHandle } from '@/components/chat/ComposerEditor';
 import { replaceTemplateVars } from '@/lib/ai-config/template';
 import { gatherTemplateVars } from '@/lib/ai-config/template-vars-sidepanel';
@@ -97,7 +98,7 @@ export interface ChatInputHandle {
 }
 
 const MENU_SEARCH_CLASS =
-  'w-full rounded-md border border-border bg-transparent px-2 py-1 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/40';
+  'chat-menu-text w-full rounded-md border border-border bg-transparent px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/40';
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   { onSend, onOpenSettings, isAgentRunning, onCancel, userHistory, sessionId, model: currentModel, thinkingLevel: currentThinkingLevel, onModelChange, onThinkingChange, contextUsage, agentBusy, onCompact, onDispatchingChange, queue = [], queuePaused = false, onRemoveQueued, onTakeQueued, onSendQueuedNow },
@@ -164,6 +165,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   // 本轮挂着的斜杠提示词。选中 `/x` 不把正文倒进输入框，而是在光标处插入一枚
   // `/名字` 内联胶囊（ComposerEditor 的 replace 装饰），正文在发送时自成信封里的一段，
   // 不掺进用户自己敲的话（issue #53）。胶囊是原子范围：整块删除，不可拆半。
+  const historyReferences = useMemo(() => findQuoteTokens(value).flatMap(({ title, sessionId }) =>
+    title === undefined ? [] : [{ title, sessionId }]), [value]);
   const [slashPrompts, setSlashPrompts] = useState<SlashPrompt[]>([]);
   // 选中一条提示词要 await 读 VFS + 采集模板变量（页面脚本注入、剪贴板），期间用户可能
   // 已经切了会话、又点了另一条、把已挂的标记退格摘掉，或者干脆已经把消息发出去了。
@@ -202,6 +205,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const editorRef = useRef<ComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const slashTriggerRef = useRef<HTMLButtonElement>(null);
   const slashSearchRef = useRef<HTMLInputElement>(null);
   const slashDismissed = useRef(false);
   const dismissSlashMenu = useCallback(() => {
@@ -534,7 +538,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         return [{ id, name: attachmentName(att), type: att.type }];
       });
       const displayText = [outgoingText, ...missingTokens].filter(Boolean).join(missingTokens.length ? ' ' : '');
-      const composerDisplay = references.length || displayAttachments.length
+      const composerDisplay = references.length || displayAttachments.length || findQuoteTokens(displayText).some(({ title }) => title !== undefined)
         ? { text: displayText, references, attachments: displayAttachments } : undefined;
       const result = await onSend(text, outgoing.length > 0 ? outgoing : undefined, dispatchSessionId, promptsToSend.length ? promptsToSend : undefined, delivery, skillsToSend.length ? skillsToSend : undefined, composerDisplay);
       if (result.status !== 'dispatched') {
@@ -843,7 +847,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useEffect(() => {
     if (!isSlashMenuVisible) return;
     const dismissOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !slashMenuRef.current?.contains(event.target)) dismissSlashMenu();
+      if (event.target instanceof Node && !slashMenuRef.current?.contains(event.target)
+        && !slashTriggerRef.current?.contains(event.target)) dismissSlashMenu();
     };
     document.addEventListener('pointerdown', dismissOutside, true);
     return () => document.removeEventListener('pointerdown', dismissOutside, true);
@@ -950,7 +955,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         // 优先按记录的词段位置换（菜单可在行中触发）；等待期间该段被改过再退回落底逻辑。
         if (tokenAtSelect) {
           const query = queryAtSelect.slice(tokenAtSelect.from, tokenAtSelect.to);
-          if (query && v.slice(tokenAtSelect.from, tokenAtSelect.from + query.length) === query) {
+          if (query ? v.slice(tokenAtSelect.from, tokenAtSelect.to) === query : v === queryAtSelect) {
             const prev = tokenAtSelect.from > 0 ? v[tokenAtSelect.from - 1] : undefined;
             const lead = prev !== undefined && !/\s/.test(prev) ? ' ' : '';
             return v.slice(0, tokenAtSelect.from) + lead + insert + v.slice(tokenAtSelect.from + query.length).replace(/^[ \t]+/, '');
@@ -1127,23 +1132,23 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       {isSlashMenuVisible && (
         <div
           ref={slashMenuRef}
-          className="absolute bottom-full left-4 right-4 mb-3 bg-popover border border-border rounded-lg shadow-xl z-50 animate-in slide-in-from-bottom-1 fade-in duration-150 overflow-hidden"
+          className="chat-menu-text absolute bottom-full left-4 right-4 mb-3 bg-popover border border-border rounded-lg shadow-xl z-50 animate-in slide-in-from-bottom-1 fade-in duration-150 overflow-hidden"
         >
           <div className="max-h-52 overflow-y-auto">
             {slashItems.length === 0 && !(prompts.length === 0 && slashFilter === '') ? (
-              <p className="text-xs text-muted-foreground text-center py-3 px-2.5">
+              <p className="text-[0.85em] text-muted-foreground text-center py-3 px-2.5">
                 {t('chat.composer.noMatch')}
               </p>
             ) : (
               <div className="py-1">
                 {(filteredPrompts.length > 0 || (prompts.length === 0 && slashFilter === '')) && (
-                  <p className="px-3 py-1 text-xs text-muted-foreground">Prompt</p>
+                  <p className="px-3 py-1 text-[0.85em] text-muted-foreground">Prompt</p>
                 )}
                 {filteredPrompts.length === 0 && prompts.length === 0 && slashFilter === '' && (
                   <button
                     type="button"
                     onClick={() => onOpenSettings?.('prompts')}
-                    className="w-full px-3 py-2.5 text-center text-xs text-muted-foreground transition-colors hover:bg-accent/50"
+                    className="w-full px-3 py-2.5 text-center text-[0.85em] text-muted-foreground transition-colors hover:bg-accent/50"
                   >
                     {t('chat.composer.noPrompts')}
                   </button>
@@ -1162,16 +1167,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                     >
                       <FileText className="size-4 mt-0.5 shrink-0 text-success" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate text-success">{p.name}</p>
+                        <p className="chat-menu-text truncate text-success">{p.name}</p>
                         {p.description && (
-                          <p className="text-xs text-muted-foreground truncate">{p.description}</p>
+                          <p className="text-[0.85em] text-muted-foreground truncate">{p.description}</p>
                         )}
                       </div>
                       {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 self-center text-primary" />}
                     </button>
                   );
                 })}
-                {filteredSkills.length > 0 && <p className="px-3 py-1 text-xs text-muted-foreground">Skill</p>}
+                {filteredSkills.length > 0 && <p className="px-3 py-1 text-[0.85em] text-muted-foreground">Skill</p>}
                 {filteredSkills.map((skill, offset) => {
                   const idx = filteredPrompts.length + offset;
                   const referenced = docTokens.some((token) => token.filePath === skill.filePath);
@@ -1186,8 +1191,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                     >
                       <Box aria-hidden="true" className="size-4 mt-0.5 shrink-0 text-info" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate text-info">{skill.name}</p>
-                        {skill.description && <p className="text-xs text-muted-foreground truncate">{skill.description}</p>}
+                        <p className="chat-menu-text truncate text-info">{skill.name}</p>
+                        {skill.description && <p className="text-[0.85em] text-muted-foreground truncate">{skill.description}</p>}
                       </div>
                       {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 self-center text-primary" />}
                     </button>
@@ -1231,7 +1236,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         onRemove={(id) => onRemoveQueued?.(id)}
       />
       {isAgentRunning && canSend && (
-        <p className="mb-1.5 px-1 text-xs text-muted-foreground">
+        <p className="mb-1.5 px-1 text-[0.85em] text-muted-foreground">
           {defaultDelivery === 'queue'
             ? t('chat.composer.followUp.shortcutHint.queue', ['Enter', otherShortcut])
             : t('chat.composer.followUp.shortcutHint.steer', ['Enter', otherShortcut])}
@@ -1240,10 +1245,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
       <div className="relative border border-border rounded-xl bg-card focus-within:border-border/80 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
         {tabMenu && (
-          <div ref={tabMenuRef} role="region" aria-label={t('chat.composer.selectTabs')} className="absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border bg-popover p-1.5 shadow-lg">
-            <p className="px-2 py-1 text-xs text-muted-foreground">{t('chat.composer.tabListTitle')}</p>
+          <div ref={tabMenuRef} role="region" aria-label={t('chat.composer.selectTabs')} className="chat-menu-text absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border bg-popover p-1.5 shadow-lg">
+            <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('chat.composer.tabListTitle')}</p>
             <div className="max-h-52 overflow-y-auto">
-              {!visibleTabs.length && <div className="p-2 text-sm text-muted-foreground">{t('chat.composer.noTabs')}</div>}
+              {!visibleTabs.length && <div className="p-2 text-[0.85em] text-muted-foreground">{t('chat.composer.noTabs')}</div>}
               {visibleTabs.map((tab) => {
                 const id = tab.id;
                 const disabled = id === undefined || !isReferenceableTab(tab.url);
@@ -1251,14 +1256,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 return (
                   <button key={id ?? tab.index} type="button" disabled={disabled}
                     onMouseDown={(event) => event.preventDefault()} onClick={() => insertTabs([tab])}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent disabled:opacity-50 ${!tabMenu.multiple && selectableTabs[activeTabChoice] === tab ? 'bg-accent' : ''}`}>
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${!tabMenu.multiple && selectableTabs[activeTabChoice] === tab ? 'bg-accent' : ''}`}>
                     <span aria-hidden="true" className="relative size-4 shrink-0">
                       {tab.favIconUrl && <img key={tab.favIconUrl} src={tab.favIconUrl} alt="" referrerPolicy="no-referrer"
                         className="peer size-4 rounded-sm object-contain" onError={(event) => { event.currentTarget.hidden = true; }} />}
                       <Globe className="absolute inset-0 size-4 text-muted-foreground peer-[:not([hidden])]:hidden" />
                     </span>
                     <span className="min-w-0 flex-1 truncate">{tab.title || tabDomain(tab)}</span>
-                    <span className="max-w-[40%] truncate text-xs text-muted-foreground">{disabled ? t('chat.composer.tabUnavailable') : tabDomain(tab)}</span>
+                    <span className="max-w-[40%] truncate text-[0.85em] text-muted-foreground">{disabled ? t('chat.composer.tabUnavailable') : tabDomain(tab)}</span>
                     <Check aria-label={referenced ? t('chat.composer.tabReferenced') : undefined} aria-hidden={!referenced}
                       data-tab-referenced={referenced || undefined}
                       className={`size-4 shrink-0 text-primary ${referenced ? '' : 'invisible'}`} />
@@ -1276,6 +1281,24 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         )}
         {/* Top row: tools + attachments */}
         <div className="flex items-center gap-0.5 px-2.5 pt-2.5 pb-2">
+          <ComposerAddMenu key={sessionId ?? 'new'} disabled={isDispatching} historyReferences={historyReferences}
+            onUpload={() => fileInputRef.current?.click()}
+            onHistorySelect={(token) => {
+              const editor = editorRef.current;
+              if (!editor || isDispatchingRef.current) return false;
+              const { end } = editor.getSelection();
+              editor.replaceRange(end, end, token + ' ');
+              return true;
+            }} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={`${supportsImage ? 'image/*,' : ''}.txt,.md,.csv,.tsv,.log,.js,.ts,.jsx,.tsx,.mjs,.cjs,.py,.java,.c,.cpp,.h,.hpp,.go,.rs,.rb,.php,.sh,.bash,.sql,.yaml,.yml,.toml,.ini,.cfg,.json,.xml,.html,.htm,.css,.scss,.less,.env,.gitignore,.editorconfig`}
+            className="hidden"
+            disabled={isDispatching}
+            onChange={handleFileUpload}
+          />
           <Button ref={tabTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
             aria-label={t('chat.composer.selectTabs')} title={t('chat.composer.selectTabs')}
             aria-expanded={tabMenuOpen} disabled={isDispatching}
@@ -1286,6 +1309,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               setTabMenu({ from: selection.start, to: selection.end, query: '', multiple: true });
             }}>
             <AtSign className="size-3.5" />
+          </Button>
+          <Button ref={slashTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
+            aria-label={t('chat.composer.selectPromptsAndSkills')} title={t('chat.composer.selectPromptsAndSkills')}
+            aria-expanded={isSlashMenuVisible} disabled={isDispatching}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (isSlashMenuVisible) { dismissSlashMenu(); return; }
+              const at = editorRef.current?.getSelection().end ?? value.length;
+              setSlashSearch('');
+              setSlashToken({ from: at, to: at, filter: '' });
+            }}>
+            <Paperclip className="size-3.5" />
           </Button>
           {/* Tool icons */}
           <Button
@@ -1320,18 +1355,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               {supportsImage ? t('chat.composer.screenshot') : t('chat.composer.modelNoImage')}
             </TooltipContent>
           </Tooltip>
-          <Button variant="ghost" size="icon-xs" title={t('chat.composer.uploadFile')} onClick={() => fileInputRef.current?.click()} disabled={isDispatching} className="size-7">
-            <Paperclip className="size-3.5" />
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={`${supportsImage ? 'image/*,' : ''}.txt,.md,.csv,.tsv,.log,.js,.ts,.jsx,.tsx,.mjs,.cjs,.py,.java,.c,.cpp,.h,.hpp,.go,.rs,.rb,.php,.sh,.bash,.sql,.yaml,.yml,.toml,.ini,.cfg,.json,.xml,.html,.htm,.css,.scss,.less,.env,.gitignore,.editorconfig`}
-            className="hidden"
-            disabled={isDispatching}
-            onChange={handleFileUpload}
-          />
           {mobileSupported && (
             <Button
               variant="ghost"

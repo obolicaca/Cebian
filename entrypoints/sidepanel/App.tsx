@@ -180,6 +180,16 @@ function App({ standaloneTab }: { standaloneTab?: Pick<chrome.tabs.Tab, 'id' | '
     }
   }, [currentSessionId]);
 
+  const inSettings = location.pathname.startsWith('/settings');
+  const chatLocation = inSettings ? lastChatPath : location;
+  const handleChatNavigation = useCallback((path: string, replace = false) => {
+    if (inSettings) {
+      lastChatPath = path;
+      return;
+    }
+    navigate(path, { replace });
+  }, [inSettings, navigate]);
+
   // 退出设置：回到进设置前的聊天路由（记不到则 /chat/new 兜底）。
   const handleExitSettings = useCallback(() => {
     navigate(lastChatPath, { replace: true });
@@ -207,19 +217,30 @@ function App({ standaloneTab }: { standaloneTab?: Pick<chrome.tabs.Tab, 'id' | '
           />
         )}
 
-        <Routes>
-          <Route path="/chat/new" element={<ChatPage onOpenSettings={(section) => navigate(section ? `/settings/${section}` : '/settings')} onTitleChange={setChatTitle} />} />
-          <Route path="/chat/:sessionId" element={<ChatPage onOpenSettings={(section) => navigate(section ? `/settings/${section}` : '/settings')} onTitleChange={setChatTitle} />} />
-          <Route
-            path="/settings/*"
-            element={
-              <Suspense fallback={null}>
-                <SettingsRoutes basePath="/settings" showBackButton showOpenInTab onBack={handleExitSettings} />
-              </Suspense>
-            }
-          />
-          <Route path="*" element={<Navigate to="/chat/new" replace />} />
-        </Routes>
+        {/* Keep the composer and its in-memory attachments mounted while settings is open. */}
+        <div className={inSettings ? 'hidden' : 'contents'} inert={inSettings}>
+          <Routes location={chatLocation}>
+            <Route path="/chat/:sessionId" element={<ChatPage
+              onOpenSettings={(section) => navigate(section ? `/settings/${section}` : '/settings')}
+              onNavigateChat={handleChatNavigation}
+              onTitleChange={setChatTitle}
+            />} />
+            <Route path="*" element={<Navigate to="/chat/new" replace />} />
+          </Routes>
+        </div>
+
+        {inSettings && (
+          <Routes>
+            <Route
+              path="/settings/*"
+              element={
+                <Suspense fallback={null}>
+                  <SettingsRoutes basePath="/settings" showBackButton showOpenInTab onBack={handleExitSettings} />
+                </Suspense>
+              }
+            />
+          </Routes>
+        )}
 
         <HistoryPanel
           open={historyOpen}

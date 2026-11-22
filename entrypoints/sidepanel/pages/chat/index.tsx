@@ -1,6 +1,6 @@
 import type { ComposerDisplay } from '@/lib/agent/composer-display';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowDown, Paperclip } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -61,10 +61,13 @@ function isCancelledToolResult(tr: ToolResultMessage): boolean {
 
 // ─── ChatPage ───
 
-export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (section?: string) => void; onTitleChange?: (title: string) => void }) {
+export function ChatPage({ onOpenSettings, onNavigateChat, onTitleChange }: {
+  onOpenSettings?: (section?: string) => void;
+  onNavigateChat: (path: string, replace?: boolean) => void;
+  onTitleChange?: (title: string) => void;
+}) {
   const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>();
   const isNewChat = !routeSessionId || routeSessionId === 'new';
-  const navigate = useNavigate();
 
   // 本窗口 / 本对话「当前选中的模型 / 思考档」本地草稿。发送 / 重试时随消息带出作
   // turn；新对话从全局种子 seed、已有会话从会话行（onSessionLoaded）seed。不直连全局
@@ -147,17 +150,17 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
   } = useBackgroundAgent({
     onSessionCreated: useCallback((sessionId: string, title: string) => {
       onTitleChange?.(title);
-      navigate(`/chat/${sessionId}`, { replace: true });
-    }, [navigate, onTitleChange]),
+      onNavigateChat(`/chat/${sessionId}`, true);
+    }, [onNavigateChat, onTitleChange]),
     onSessionLoaded: useCallback((session: SessionSnapshot | null) => {
       if (!session) {
-        navigate('/chat/new', { replace: true });
+        onNavigateChat('/chat/new', true);
         return;
       }
       // 已有会话：本地草稿 seed 自会话行自己存的选择（而非全局）。模型 / provider
       // 为空（旧会话 / 旧备份）时置 null，让发送门禄拦下来提示用户重选。
       seedTurnFromSession(session.provider, session.model, session.thinkingLevel);
-    }, [navigate, seedTurnFromSession]),
+    }, [onNavigateChat, seedTurnFromSession]),
     // 重新订阅一个仍有活 agent 的会话时，后台走 session_state（不带完整会话行），
     // 由它单独回传该会话的模型 / 思考档来 seed——与 onSessionLoaded 同样的逻辑。
     onSessionSettings: useCallback((provider: string, model: string, thinkingLevel: string) => {
@@ -167,8 +170,8 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
     // 源会话。新 id 与 activeSessionIdRef 不同，订阅 effect 会对它发普通 subscribe。
     onSessionForked: useCallback((sessionId: string, title: string) => {
       toast.success(t('chat.session.forked', [title]));
-      navigate(`/chat/${sessionId}`);
-    }, [navigate]),
+      onNavigateChat(`/chat/${sessionId}`);
+    }, [onNavigateChat]),
   });
 
   const { messages, branchInfo, isAgentRunning, isCompacting, sessionId: activeSessionId, sessionTitle, lastError, contextUsage, queue, queuePaused } = state;

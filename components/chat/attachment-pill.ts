@@ -23,7 +23,7 @@ export function previewImageAttachment(att: Extract<InlineAttachment, { type: 'i
   showDialog('image-preview', { src: imageAttachmentSrc(att), alt: attachmentName(att) });
 }
 
-export function attachFilePreview(anchor: HTMLElement, att: Extract<InlineAttachment, { type: 'file' }>) {
-  const preview = compactTabText(att.content.slice(0, 600), 280);
-  return preview ? attachPillPreview(anchor, preview) : undefined;
+export function attachAttachmentPreview(anchor: HTMLElement, name: string, content = '') {
+  const preview = compactTabText(content.slice(0, 600), 280);
+  return attachPillPreview(anchor, preview, name);
 }

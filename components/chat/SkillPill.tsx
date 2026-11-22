@@ -2,7 +2,7 @@ import { Box } from 'lucide-react';
 
 /** Shared visual for inline Skill references (composer widget + message bubble). */
 export const SKILL_PILL_CLASS =
-  'chat-inline-pill bg-info/10 font-medium text-info';
+  'chat-inline-pill bg-info/10 text-info';
 
 /** Lucide `box` icon markup for non-React contexts (CodeMirror widget DOM). */
 export const SKILL_PILL_ICON_SVG =

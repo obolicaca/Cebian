@@ -214,11 +214,11 @@ export async function exportSkillPackage(skillAbsDir: string): Promise<Blob> {
  * surface a clear "nothing to back up" message instead of silently
  * downloading an empty (and unimportable) zip.
  */
-export async function exportAllSkillsPackage(): Promise<{ blob: Blob; count: number }> {
+export async function exportAllSkillsPackage(selected?: readonly string[]): Promise<{ blob: Blob; count: number }> {
   const skillsRoot = normalizePath(CEBIAN_SKILLS_DIR);
   let dirNames: string[];
   try {
-    dirNames = await vfs.readdir(skillsRoot);
+    dirNames = selected ? [...new Set(selected)] : await vfs.readdir(skillsRoot);
   } catch {
     dirNames = [];
   }
@@ -226,13 +226,25 @@ export async function exportAllSkillsPackage(): Promise<{ blob: Blob; count: num
   const zipMap: Record<string, Uint8Array> = {};
   let count = 0;
   for (const dirName of dirNames) {
+    if (selected && (dirName === '.' || dirName === '..' || !dirName || /[/\\]/.test(dirName))) {
+      throw new SkillPackageError('unsafePath', dirName);
+    }
     const dirAbs = `${skillsRoot}/${dirName}`;
     let stat;
-    try { stat = await vfs.stat(dirAbs); } catch { continue; }
-    if (!stat.isDirectory()) continue;
+    try { stat = await vfs.stat(dirAbs); } catch {
+      if (selected) throw new SkillPackageError('missingEntry');
+      continue;
+    }
+    if (!stat.isDirectory()) {
+      if (selected) throw new SkillPackageError('missingEntry');
+      continue;
+    }
 
     const files = await vfs.walkFiles(dirAbs);
-    if (!files.some((f) => f.relPath === SKILL_ENTRY_FILE)) continue;
+    if (!files.some((f) => f.relPath === SKILL_ENTRY_FILE)) {
+      if (selected) throw new SkillPackageError('missingEntry');
+      continue;
+    }
 
     for (const { relPath, absPath } of files) {
       const raw = await vfs.readFile(absPath);

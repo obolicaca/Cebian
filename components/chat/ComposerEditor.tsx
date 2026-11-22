@@ -1,5 +1,5 @@
 import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, type InlineAttachment } from '@/lib/agent/attachment-tokens';
-import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachFilePreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
+import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachAttachmentPreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
 import { compactTabText, describeTabReferences, findTabReferences, tabReferenceToken, type TabReference } from '@/lib/agent/tab-references';
 import { displayQuotedText, findQuoteTokens } from '@/lib/agent/quote-tokens';
 import { readCopiedChatReferences } from '@/lib/ui/clipboard';
@@ -117,7 +117,6 @@ class AttachmentPillWidget extends WidgetType {
     if (!att) return pill;
     pill.dataset.attachmentPill = att.type;
     const name = attachmentName(att);
-    pill.title = name;
     pill.className = attachmentPillClass(att.type);
     const icon = document.createElement('span');
     icon.className = 'group relative size-3.5 shrink-0';
@@ -139,7 +138,6 @@ class AttachmentPillWidget extends WidgetType {
       (label as HTMLButtonElement).type = 'button';
     } else {
       visual.innerHTML = PROMPT_PILL_ICON_SVG;
-      this.detach = attachFilePreview(pill, att);
     }
     icon.append(visual, pillRemoveButton(t('common.delete') + ' ' + name, () => {
       const from = view.posAtDOM(pill);
@@ -147,6 +145,7 @@ class AttachmentPillWidget extends WidgetType {
       if (view.state.sliceDoc(from, from + token.length) === token) removePillRange(view, from, from + token.length);
     }));
     pill.append(icon, label);
+    this.detach = attachAttachmentPreview(pill, name, att.type === 'file' ? att.content : undefined);
     return pill;
   }
   override destroy() { this.detach?.(); }
@@ -155,17 +154,18 @@ class AttachmentPillWidget extends WidgetType {
 
 class QuotePillWidget extends WidgetType {
   private detach?: () => void;
-  constructor(readonly quote: string) { super(); }
-  override eq(other: QuotePillWidget) { return other.quote === this.quote; }
+  constructor(readonly quote: string, readonly title?: string) { super(); }
+  override eq(other: QuotePillWidget) { return other.quote === this.quote && other.title === this.title; }
   override toDOM(view: EditorView) {
     const pill = document.createElement('span');
     pill.className = `group ${QUOTE_PILL_STYLE} ${TAB_PILL_LAYOUT}`;
     pill.dataset.quotePill = 'true';
+    if (this.title !== undefined) pill.dataset.historyReference = 'true';
     const icon = document.createElement('span');
     icon.className = 'relative size-3.5 shrink-0';
     const glyph = document.createElement('span');
     glyph.className = 'absolute inset-0 grid place-items-center group-hover:invisible group-focus-within:invisible';
-    glyph.textContent = '❝';
+    glyph.textContent = this.title === undefined ? '❝' : '◷';
     icon.append(glyph, pillRemoveButton(t('chat.removeQuote'), () => {
       const from = view.posAtDOM(pill);
       const token = findQuoteTokens(view.state.doc.toString()).find((item) => item.from === from);
@@ -173,9 +173,9 @@ class QuotePillWidget extends WidgetType {
     }));
     const label = document.createElement('span');
     label.className = 'min-w-0 truncate';
-    label.textContent = compactTabText(this.quote, 28);
+    label.textContent = compactTabText(this.title ?? this.quote, 28);
     pill.append(icon, label);
-    this.detach = attachPillPreview(pill, this.quote, undefined, undefined, true);
+    this.detach = attachPillPreview(pill, this.title === undefined ? this.quote : compactTabText(this.quote, 280), undefined, undefined, this.title === undefined);
     return pill;
   }
   override destroy() { this.detach?.(); }
@@ -253,7 +253,7 @@ function buildDecorations(state: EditorState, cfg: PillConfig): { decorations: D
     pills.push(Decoration.replace({ widget }).range(token.from, token.to));
   }
   for (const token of findQuoteTokens(state.doc.toString())) {
-    pills.push(Decoration.replace({ widget: new QuotePillWidget(token.quote) }).range(token.from, token.to));
+    pills.push(Decoration.replace({ widget: new QuotePillWidget(token.quote, token.title) }).range(token.from, token.to));
   }
   if (cfg.slashPrompts.length) {
     for (const token of findPromptTokens(state.doc.toString(), cfg.slashPrompts.map((p) => p.name))) {

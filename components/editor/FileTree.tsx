@@ -31,9 +31,15 @@ export interface FileTreeHandle {
   createFolder: (parentId?: string) => void;
   /** Re-scan the VFS and redraw the tree. */
   refresh: () => void;
+  getNode: (id: string) => NodeApi<TreeNodeData> | null;
 }
 
+export interface FileTreeNodeActions {
+  trailing?: (node: NodeApi<TreeNodeData>) => React.ReactNode;
+  contextMenu?: (node: NodeApi<TreeNodeData> | null, tree: FileTreeHandle | null) => React.ReactNode;
+}
 interface FileTreeProps {
+  nodeActions?: FileTreeNodeActions;
   /** VFS root directory to display. */
   root: string;
   /** Currently selected file path. */
@@ -101,7 +107,18 @@ function FileIcon({ name, className }: { name: string; className?: string }) {
 
 function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeNodeData>) {
   const allowNewFolder = (tree.props as any).allowNewFolder ?? true;
+  const nodeActions = (tree.props as { nodeActions?: FileTreeNodeActions }).nodeActions;
   const editStartRef = useRef<number>(0);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const isPlaceholder = (tree.props as { isPlaceholder?: (id: string) => boolean }).isPlaceholder?.(node.id) ?? false;
+  useEffect(() => {
+    if (!node.isEditing || isPlaceholder) return;
+    const cancelOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !renameInputRef.current?.contains(event.target)) node.reset();
+    };
+    document.addEventListener('pointerdown', cancelOutside, true);
+    return () => document.removeEventListener('pointerdown', cancelOutside, true);
+  }, [node, node.isEditing, isPlaceholder]);
 
   const runMenuAction = (action: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -113,6 +130,7 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
     if (node.isInternal) {
       node.toggle();
     }
+    (tree.props as { onCreationTarget?: (node: NodeApi<TreeNodeData>) => void }).onCreationTarget?.(node);
     node.handleClick(e);
     e.stopPropagation();
   };
@@ -120,6 +138,7 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
   const content = (
     <div
       ref={dragHandle}
+      data-file-tree-node={node.id}
       style={style}
       className={cn(
         'flex items-center gap-1.5 px-2 py-1 rounded-sm text-[13px] cursor-pointer select-none group',
@@ -151,6 +170,7 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
       {/* Name or rename input */}
       {node.isEditing ? (
         <input
+          ref={renameInputRef}
           type="text"
           defaultValue={node.data.name}
           className="flex-1 min-w-0 h-5.5 text-[13px] px-1 py-0 border rounded bg-background outline-none focus:ring-1 focus:ring-primary/40"
@@ -181,7 +201,7 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
               return;
             }
             const val = e.target.value.trim();
-            if (val) node.submit(val);
+            if (isPlaceholder && val) node.submit(val);
             else node.reset();
           }}
         />
@@ -189,8 +209,11 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
         <span className="truncate flex-1">{node.data.name}</span>
       )}
 
+      {nodeActions?.trailing?.(node)}
     </div>
   );
+
+  if (nodeActions?.contextMenu) return content;
 
   // Context menu items based on node type and allowNewFolder
   let menuItems: React.ReactNode;
@@ -244,9 +267,10 @@ function NodeRenderer({ node, style, dragHandle, tree }: NodeRendererProps<TreeN
 // ─── Main component ───
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
-  function FileTree({ root, selectedFile, onSelect, refreshKey, searchTerm, allowNewFolder = true }, ref) {
+  function FileTree({ root, selectedFile, onSelect, refreshKey, searchTerm, allowNewFolder = true, nodeActions }, ref) {
   const [data, setData] = useState<TreeNodeData[]>([]);
   const treeRef = useRef<TreeApi<TreeNodeData>>(null);
+  const folderTargetRef = useRef<{ root: string; id: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 200, height: 400 });
 
@@ -327,7 +351,9 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
 
   const doCreateFolder = useCallback(async (parentId?: string) => {
     if (treeRef.current?.isEditing) return;
-    const parent = resolveCreateParent(parentId);
+    const selected = folderTargetRef.current;
+    const selectedFolder = selected?.root === root ? treeRef.current?.get(selected.id) : null;
+    const parent = parentId ?? (selectedFolder?.isInternal ? selectedFolder.id : root);
     const name = await uniqueName(parent, 'new-folder');
     const fullPath = `${parent}/${name}`;
     try {
@@ -337,13 +363,14 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       revealParent(parent);
       setPendingEditId(fullPath);
     } catch { /* ignore */ }
-  }, [resolveCreateParent, scan, revealParent]);
+  }, [root, scan, revealParent]);
 
   // Expose imperative methods
   useImperativeHandle(ref, () => ({
     createFile: doCreateFile,
     createFolder: doCreateFolder,
     refresh: scan,
+    getNode: (id) => treeRef.current?.get(id) ?? null,
   }), [doCreateFile, doCreateFolder, scan]);
 
   // ─── Data handlers (controlled mode) ───
@@ -425,8 +452,13 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     }
   };
 
+  const onCreationTarget = (node: NodeApi<TreeNodeData>) => {
+    folderTargetRef.current = node.isInternal ? { root, id: node.id } : null;
+  };
+
   const onActivate = (node: NodeApi<TreeNodeData>) => {
     if (node.isEditing) return; // Don't navigate while inline-renaming
+    onCreationTarget(node);
     if (node.isLeaf) onSelect(node.id);
   };
 
@@ -436,6 +468,9 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     <div
       ref={containerRef}
       className="h-full w-full relative"
+      onClick={(event) => {
+        if (event.target instanceof Element && !event.target.closest('[data-file-tree-node]')) folderTargetRef.current = null;
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Delete') {
           const tree = treeRef.current;
@@ -467,7 +502,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         paddingTop={6}
         paddingBottom={6}
         // Pass through custom props for NodeRenderer to read
-        {...{ allowNewFolder, onCreateFile: doCreateFile, onCreateFolder: doCreateFolder } as any}
+        {...{ allowNewFolder, nodeActions, onCreationTarget, isPlaceholder: (id: string) => placeholdersRef.current.has(id), onCreateFile: doCreateFile, onCreateFolder: doCreateFolder } as any}
       >
         {NodeRenderer}
       </Tree>

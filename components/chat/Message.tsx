@@ -1,5 +1,5 @@
 import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, type InlineAttachment } from '@/lib/agent/attachment-tokens';
-import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachFilePreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
+import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachAttachmentPreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
 import { Bot, Globe, ChevronLeft, ChevronRight, Lightbulb, CheckCircle, Crosshair, FileText, Film, FoldVertical, Network, Pencil, Scissors, ShieldAlert } from 'lucide-react';
 import { memo, useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
@@ -26,12 +26,13 @@ import type { Message } from '@earendil-works/pi-ai';
 
 function HistoryAttachmentPill({ attachment }: { attachment: InlineAttachment }) {
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (ref.current && attachment.type === 'file') return attachFilePreview(ref.current, attachment);
-  }, [attachment]);
   const name = attachmentName(attachment);
+  const content = attachment.type === 'file' ? attachment.content : undefined;
+  useEffect(() => {
+    if (ref.current) return attachAttachmentPreview(ref.current, name, content);
+  }, [name, content]);
   return (
-    <span ref={ref} data-attachment-pill={attachment.type} title={name} className={attachmentPillClass(attachment.type)}>
+    <span ref={ref} data-attachment-pill={attachment.type} className={attachmentPillClass(attachment.type)}>
       {attachment.type === 'image' ? (
         <button type="button" className="contents" onClick={() => previewImageAttachment(attachment)}>
           <img src={imageAttachmentSrc(attachment)} className="size-3.5 shrink-0 rounded-sm object-cover" alt="" />
@@ -47,15 +48,15 @@ function HistoryAttachmentPill({ attachment }: { attachment: InlineAttachment })
   );
 }
 
-function HistoryQuotePill({ quote }: { quote: string }) {
+function HistoryQuotePill({ quote, title }: { quote: string; title?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (ref.current) return attachPillPreview(ref.current, quote, undefined, undefined, true);
-  }, [quote]);
+    if (ref.current) return attachPillPreview(ref.current, title === undefined ? quote : compactTabText(quote, 280), undefined, undefined, title === undefined);
+  }, [quote, title]);
   return (
-    <span ref={ref} data-quote-pill="true" className={`${QUOTE_PILL_STYLE} ${TAB_PILL_LAYOUT}`}>
-      <span className="grid size-3.5 shrink-0 place-items-center" aria-hidden="true">❝</span>
-      <span className="min-w-0 truncate">{compactTabText(quote, 28)}</span>
+    <span ref={ref} data-quote-pill="true" data-history-reference={title === undefined ? undefined : true} className={`${QUOTE_PILL_STYLE} ${TAB_PILL_LAYOUT}`}>
+      <span className="grid size-3.5 shrink-0 place-items-center" aria-hidden="true">{title === undefined ? '❝' : '◷'}</span>
+      <span className="min-w-0 truncate">{compactTabText(title ?? quote, 28)}</span>
     </span>
   );
 }
@@ -254,8 +255,8 @@ export function UserMessageBubble({
       const attachment = displayAttachments.get(id);
       return { from, to, node: attachment ? <HistoryAttachmentPill key={from} attachment={attachment} /> : null };
     }),
-    ...findQuoteTokens(bubbleText).map(({ quote, from, to }) => ({
-      from, to, node: <HistoryQuotePill key={from} quote={quote} />,
+    ...findQuoteTokens(bubbleText).map(({ quote, title, from, to }) => ({
+      from, to, node: <HistoryQuotePill key={from} quote={quote} title={title} />,
     })),
     ...findTabReferences(bubbleText).map(({ ref, from, to }) => ({
       from, to, node: <HistoryTabPill key={from} reference={ref} />,

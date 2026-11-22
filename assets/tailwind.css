@@ -185,11 +185,29 @@
   height: 1.625em;
   padding-inline: 0.375rem;
   border-radius: 0.375rem;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
   white-space: nowrap;
   line-height: 1.25;
   vertical-align: middle;
   position: relative;
   top: -0.12em;
+
+  & button {
+    font: inherit;
+  }
+}
+
+@utility chat-menu-text {
+  font-family: var(--chat-font-family, inherit);
+  font-size: calc(0.85rem * var(--chat-text-scale, 1));
+  font-weight: 400;
+  line-height: 1.5;
+
+  &::placeholder {
+    font: inherit;
+  }
 }
 
 @utility chat-text-code {

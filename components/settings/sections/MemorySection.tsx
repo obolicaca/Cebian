@@ -1,11 +1,9 @@
-import { useCallback, useRef } from 'react';
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { FileWorkspace, type FileWorkspaceHandle } from './FileWorkspace';
+import { useRef } from 'react';
+import type { FileWorkspaceHandle } from './FileWorkspace';
+import { MarkdownFileManager } from './MarkdownFileManager';
 import { ModelSelector } from '@/components/chat/ModelSelector';
-import { encodeRelPath } from '@/lib/persistence/vfs';
 import { CEBIAN_MEMORIES_DIR } from '@/lib/persistence/vfs-paths';
 import {
-  settingsFilePanelWidth,
   memorySettings,
   memoryOrganizeState,
   resolveOrganizeSettings,
@@ -20,7 +18,6 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { SettingsOutletContext } from '@/components/settings/SettingsLayout';
 import { getUiLanguage, t } from '@/lib/i18n';
 
 const MEMORY_TEMPLATE = () => `---
@@ -166,23 +163,8 @@ function OrganizeControls({
  * 选中文件由 splat 路由驱动，URL 可分享、前进/后退连贯。
  */
 export function MemorySection() {
-  const { basePath, breakpoint } = useOutletContext<SettingsOutletContext>();
-  const params = useParams();
-  const navigate = useNavigate();
   const [settings, setSettings] = useStorageItem(memorySettings, { enabled: false });
-
-  // react-router v6 decodes splat params; fallback to '' means no file selected.
-  const splat = params['*'] ?? '';
-  const relativePath = splat || undefined;
   const fileWsRef = useRef<FileWorkspaceHandle>(null);
-
-  const handleSelect = useCallback((rel: string | null) => {
-    if (rel) {
-      navigate(`${basePath}/memory/${encodeRelPath(rel)}`, { replace: true });
-    } else {
-      navigate(`${basePath}/memory`, { replace: true });
-    }
-  }, [basePath, navigate]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -211,15 +193,11 @@ export function MemorySection() {
           />
         )}
       </div>
-      <FileWorkspace
-        ref={fileWsRef}
-        root={CEBIAN_MEMORIES_DIR}
-        relativePath={relativePath}
-        onSelectRelative={handleSelect}
+      <MarkdownFileManager
+        section="memory"
+        directory={CEBIAN_MEMORIES_DIR}
         newFileTemplate={MEMORY_TEMPLATE()}
-        panelWidthStorage={settingsFilePanelWidth}
-        compactMode={breakpoint === 'compact'}
-        className="flex-1"
+        workspaceRef={fileWsRef}
       />
     </div>
   );

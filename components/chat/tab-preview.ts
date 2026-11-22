@@ -28,7 +28,7 @@ export function attachTabPreview(anchor: HTMLElement, reference: TabReference) {
     reference.summary ? undefined : () => readDescription(reference));
 }
 
-export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUrl?: string, loadDescription?: () => Promise<string>, fullText = false) {
+export function attachPillPreview(anchor: HTMLElement, summary: string, detail?: string, loadDescription?: () => Promise<string>, fullText = false) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let preview: HTMLDivElement | undefined;
@@ -52,7 +52,7 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUr
       preview = panel;
       panel.role = 'tooltip';
       panel.className = 'fixed z-50 w-60 max-w-[calc(100vw-16px)] rounded-md border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md ' +
-        (fullText ? 'max-h-[min(18rem,50vh)] overflow-y-auto' : 'pointer-events-none');
+        (fullText ? 'overflow-y-auto' : 'pointer-events-none overflow-hidden');
       if (fullText) {
         panel.addEventListener('pointerenter', () => clearTimeout(closeTimer));
         panel.addEventListener('pointerleave', hide);
@@ -60,11 +60,11 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUr
       const description = document.createElement('div');
       description.className = fullText ? 'whitespace-pre-wrap break-words' : 'break-words';
       description.textContent = fullText ? summary : compactTabText(summary, PREVIEW_DESCRIPTION_LIMIT);
-      panel.append(description);
-      if (sourceUrl) {
+      if (summary || loadDescription) panel.append(description);
+      if (detail) {
         const url = document.createElement('div');
-        url.className = 'mt-1 break-all text-[11px] text-muted-foreground';
-        url.textContent = sourceUrl;
+        url.className = 'break-all text-[11px] text-muted-foreground' + (summary || loadDescription ? ' mt-1' : '');
+        url.textContent = detail;
         panel.append(url);
       }
       document.body.append(panel);
@@ -72,9 +72,10 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUr
       const position = () => {
         const rect = anchor.getBoundingClientRect();
         panel.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - panel.offsetWidth - 8)) + 'px';
-        const below = rect.bottom + 6;
-        panel.style.top = (below + panel.offsetHeight <= window.innerHeight - 8
-          ? below : Math.max(8, rect.top - panel.offsetHeight - 6)) + 'px';
+        const spaceAbove = Math.max(0, rect.top - 14);
+        panel.style.visibility = spaceAbove ? 'visible' : 'hidden';
+        panel.style.maxHeight = fullText ? `min(18rem, 50vh, ${spaceAbove}px)` : `${spaceAbove}px`;
+        panel.style.top = Math.max(8, rect.top - panel.offsetHeight - 6) + 'px';
       };
       position();
       void loadDescription?.().then((text) => {

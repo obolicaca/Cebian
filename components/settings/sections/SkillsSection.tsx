@@ -1,13 +1,13 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import { Blocks, Download, FolderDown, Upload } from 'lucide-react';
+import { Blocks, Download, FilePlus, FolderDown, FolderPlus, Pencil, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   FileWorkspace,
   type FileWorkspaceAction, type FileWorkspaceHandle,
 } from './FileWorkspace';
 import { encodeRelPath } from '@/lib/persistence/vfs';
-import { CEBIAN_SKILLS_DIR } from '@/lib/persistence/vfs-paths';
+import { CEBIAN_SKILLS_DIR, SKILL_ENTRY_FILE } from '@/lib/persistence/vfs-paths';
 import { settingsFilePanelWidth } from '@/lib/persistence/storage';
 import { createSkillTemplate } from '@/lib/ai-config/skill-creator';
 import {
@@ -17,9 +17,11 @@ import {
   SkillPackageError,
   type SkillImportResult,
 } from '@/lib/ai-config/skill-transfer';
-import { showDialog } from '@/lib/ui/dialog';
+import { showConfirm, showDialog } from '@/lib/ui/dialog';
 import { vfs, normalizePath } from '@/lib/persistence/vfs';
-import { downloadFile } from '@/lib/utils';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
+import type { FileTreeNodeActions } from '@/components/editor/FileTree';
 import type { SettingsOutletContext } from '@/components/settings/SettingsLayout';
 import { t } from '@/lib/i18n';
 
@@ -43,12 +45,12 @@ export function SkillsSection() {
   const workspaceRef = useRef<FileWorkspaceHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [checkedFolders, setCheckedFolders] = useState<string[]>([]);
+  const skillsRoot = normalizePath(CEBIAN_SKILLS_DIR);
+  const selectedSkillNames = useMemo(() => checkedFolders.map((path) => path.slice(skillsRoot.length + 1)), [checkedFolders, skillsRoot]);
+  const canExportSelection = selectedSkillNames.length > 0 && selectedSkillNames.every((name) => !name.includes('/'));
   const splat = params['*'] ?? '';
   const relativePath = splat || undefined;
-  // The first path segment of the currently-selected file IS the skill
-  // directory name (skills are flat under CEBIAN_SKILLS_DIR). Used to
-  // enable / target the "Export current" action.
-  const currentSkillName = relativePath ? relativePath.split('/')[0] : undefined;
 
   const handleSelect = useCallback((rel: string | null) => {
     if (rel) {
@@ -88,33 +90,124 @@ export function SkillsSection() {
     return err instanceof Error ? err.message : String(err);
   }, []);
 
-  const handleExportCurrent = useCallback(async () => {
-    if (!currentSkillName) return;
+  const exportSkills = useCallback(async (names?: readonly string[], single?: string) => {
     try {
-      const skillsRoot = normalizePath(CEBIAN_SKILLS_DIR);
-      const blob = await exportSkillPackage(`${skillsRoot}/${currentSkillName}`);
-      downloadFile(`${currentSkillName}.cebian-skill.zip`, blob, 'application/zip');
-      toast.success(t('settings.skills.exportSuccess', [currentSkillName]));
-    } catch (err) {
-      toast.error(formatError(err));
-    }
-  }, [currentSkillName, formatError]);
-
-  const handleExportAll = useCallback(async () => {
-    try {
-      const { blob, count } = await exportAllSkillsPackage();
+      const pickerWindow = window as Window & {
+        showSaveFilePicker?: (options: {
+          suggestedName: string;
+          types: { description: string; accept: Record<string, string[]> }[];
+        }) => Promise<FileSystemFileHandle>;
+      };
+      if (!pickerWindow.showSaveFilePicker) throw new Error('Save picker is unavailable');
       const date = new Date().toISOString().slice(0, 10);
-      downloadFile(`cebian-skills-backup-${date}.zip`, blob, 'application/zip');
-      toast.success(t('settings.skills.exportAllSuccess', count));
+      const handle = await pickerWindow.showSaveFilePicker({
+        suggestedName: single ? `${single}.cebian-skill.zip` : `cebian-skills-${names ? 'selected' : 'backup'}-${date}.zip`,
+        types: [{ description: 'ZIP', accept: { 'application/zip': ['.zip'] } }],
+      });
+      const { blob, count } = single
+        ? { blob: await exportSkillPackage(`${normalizePath(CEBIAN_SKILLS_DIR)}/${single}`), count: 1 }
+        : await exportAllSkillsPackage(names);
+      await blob.stream().pipeTo(await handle.createWritable());
+      toast.success(single ? t('settings.skills.exportSuccess', [single]) : t('settings.skills.exportAllSuccess', count));
     } catch (err) {
-      if (err instanceof SkillPackageError && err.code === 'missingEntry') {
-        // No exportable skills — surface as a neutral info, not an error.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (!names && !single && err instanceof SkillPackageError && err.code === 'missingEntry') {
         toast(t('settings.skills.exportEmpty'));
         return;
       }
       toast.error(formatError(err));
     }
   }, [formatError]);
+
+  const deletePaths = useCallback(async (paths: string[]) => {
+    if (!paths.length) return;
+    paths = paths.filter((path) => !paths.some((parent) => path.startsWith(parent + '/')));
+    const names = paths.map((path) => path.split('/').at(-1) ?? path);
+    const confirmed = await showConfirm({
+      title: t('settings.skills.confirmDeleteTitle'),
+      description: t('settings.skills.confirmDeleteDescription', [names.join(', ')]),
+      confirmText: t('common.delete'),
+      destructive: true,
+    });
+    if (!confirmed) return;
+    const deleted: string[] = [];
+    for (const path of paths) {
+      try {
+        const stat = await vfs.stat(path);
+        if (stat.isDirectory()) await vfs.rm(path, { recursive: true });
+        else await vfs.unlink(path);
+        deleted.push(path);
+      } catch (error) {
+        toast.error(formatError(error));
+      }
+    }
+    const root = normalizePath(CEBIAN_SKILLS_DIR);
+    setCheckedFolders((current) => current.filter((path) => !deleted.some((parent) => path === parent || path.startsWith(parent + '/'))));
+    if (relativePath && deleted.some((path) => root + '/' + relativePath === path || (root + '/' + relativePath).startsWith(path + '/'))) {
+      handleSelect(null);
+    }
+    workspaceRef.current?.refresh();
+  }, [formatError, handleSelect, relativePath]);
+
+  const deleteAllSkills = useCallback(async () => {
+    try {
+      const root = normalizePath(CEBIAN_SKILLS_DIR);
+      const names = await vfs.readdir(root);
+      const candidates = await Promise.all(names.map(async (name) => {
+        const path = root + '/' + name;
+        const entry = await vfs.stat(path + '/' + SKILL_ENTRY_FILE).catch(() => null);
+        return entry && !entry.isDirectory() ? path : null;
+      }));
+      await deletePaths(candidates.filter((path) => path !== null));
+    } catch (error) {
+      toast.error(formatError(error));
+    }
+  }, [deletePaths, formatError]);
+
+  const nodeActions: FileTreeNodeActions = {
+    trailing: (node) => node.isInternal ? (
+      <Checkbox
+        aria-label={t('common.select') + ' ' + node.data.name}
+        checked={checkedFolders.includes(normalizePath(node.id))}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        onCheckedChange={(checked) => setCheckedFolders((previous) => checked === true
+          ? [...new Set([...previous, normalizePath(node.id)])]
+          : previous.filter((path) => path !== normalizePath(node.id)))}
+      />
+    ) : null,
+    contextMenu: (node, tree) => {
+      const root = normalizePath(CEBIAN_SKILLS_DIR);
+      const isSkill = node?.level === 0 && node.isInternal && node.data.children?.some((child) => child.name === SKILL_ENTRY_FILE);
+      const parent = node?.isInternal ? node.id : root;
+      const targets = checkedFolders.length ? checkedFolders : node ? [normalizePath(node.id)] : [];
+      return (
+        <>
+          <ContextMenuItem disabled={checkedFolders.length ? !canExportSelection : !isSkill} onSelect={() => {
+            if (checkedFolders.length) void exportSkills(selectedSkillNames);
+            else if (isSkill && node) void exportSkills(undefined, node.data.name);
+          }}>
+            <Download className="size-3.5 mr-2" /> {t('settings.skills.exportCurrent')}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => tree?.createFile(parent)}>
+            <FilePlus className="size-3.5 mr-2" /> {t('common.newFile')}
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => tree?.createFolder(parent)}>
+            <FolderPlus className="size-3.5 mr-2" /> {t('common.newFolder')}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!node} onSelect={() => node?.edit()}>
+            <Pencil className="size-3.5 mr-2" /> {t('common.rename')}
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!targets.length} onSelect={() => void deletePaths(targets)} className="text-destructive focus:text-destructive">
+            <Trash2 className="size-3.5 mr-2" /> {t('common.delete')}
+          </ContextMenuItem>
+        </>
+      );
+    },
+  };
 
   /** Caller for the import preview dialog. Refreshes the file tree and
    *  shows a localized success toast based on package type. The scanner's
@@ -175,16 +268,31 @@ export function SkillsSection() {
       id: 'export-current-skill',
       icon: Download,
       label: t('settings.skills.exportCurrent'),
-      disabled: !currentSkillName,
-      onSelect: handleExportCurrent,
+      disabled: !canExportSelection,
+      onSelect: () => exportSkills(selectedSkillNames),
     },
     {
       id: 'export-all-skills',
       icon: FolderDown,
       label: t('settings.skills.exportAll'),
-      onSelect: handleExportAll,
+      onSelect: () => exportSkills(),
     },
-  ], [handleCreateSkill, handleImportClick, handleExportCurrent, handleExportAll, currentSkillName]);
+    {
+      id: 'delete-selected-skills',
+      icon: Trash2,
+      label: t('common.delete'),
+      disabled: checkedFolders.length === 0,
+      destructive: true,
+      onSelect: () => deletePaths(checkedFolders),
+    },
+    {
+      id: 'delete-all-skills',
+      icon: Trash2,
+      label: t('settings.skills.deleteAll'),
+      destructive: true,
+      onSelect: deleteAllSkills,
+    },
+  ], [handleCreateSkill, handleImportClick, exportSkills, selectedSkillNames, canExportSelection, checkedFolders, deletePaths, deleteAllSkills]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -212,6 +320,7 @@ export function SkillsSection() {
         compactMode={breakpoint === 'compact'}
         className="flex-1"
         toolbarActions={toolbarActions}
+        nodeActions={nodeActions}
       />
     </div>
   );

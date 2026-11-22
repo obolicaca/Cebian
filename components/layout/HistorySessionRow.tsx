@@ -2,7 +2,10 @@
 // 普通态是点开会话 + 悬停操作，选择态是勾选框 + 点行即勾选。
 
 import { useRef, useState } from 'react';
-import { Archive, ArchiveRestore, CheckSquare, Ellipsis, GitFork, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, CheckSquare, Copy, Download, Ellipsis, GitFork, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { historyMarkdownFilename, loadHistoryMarkdown } from '@/lib/agent/history-markdown';
+import { copyText } from '@/lib/ui/clipboard';
 import { Button } from '@/components/ui/button';
 import { InlineRenameInput } from '@/components/common/InlineRenameInput';
 import { MAX_SESSION_TITLE_LENGTH } from '@/lib/agent/session-title';
@@ -16,6 +19,37 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { SessionMeta } from '@/lib/ipc/protocol';
 import { t } from '@/lib/i18n';
+
+type SavePickerWindow = Window & {
+  showSaveFilePicker?(options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+    excludeAcceptAllOption: boolean;
+  }): Promise<FileSystemFileHandle>;
+};
+
+async function exportConversation(session: SessionMeta, action: 'copy' | 'download') {
+  try {
+    if (action === 'copy') {
+      await copyText(await loadHistoryMarkdown(session.id));
+      return;
+    }
+
+    // Open the picker before reading IndexedDB, while the menu's user activation is live.
+    const pickerWindow = window as SavePickerWindow;
+    if (!pickerWindow.showSaveFilePicker) throw new Error('Save picker is unavailable');
+    const handle = await pickerWindow.showSaveFilePicker({
+      suggestedName: historyMarkdownFilename(session.title, session.id),
+      types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }],
+      excludeAcceptAllOption: true,
+    });
+    const markdown = await loadHistoryMarkdown(session.id);
+    await new Blob([markdown], { type: 'text/markdown;charset=utf-8' }).stream().pipeTo(await handle.createWritable());
+  } catch (error) {
+    if (action === 'download' && error instanceof DOMException && error.name === 'AbortError') return;
+    toast.error(t('common.session.exportMarkdownFailed'));
+  }
+}
 
 interface HistorySessionRowProps {
   session: SessionMeta;
@@ -219,6 +253,14 @@ export function HistorySessionRow({
                 }
               }}
             >
+              <DropdownMenuItem onSelect={() => void exportConversation(session, 'download')}>
+                <Download />
+                <span className="min-w-0 break-words">{t('common.session.downloadMarkdown')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void exportConversation(session, 'copy')}>
+                <Copy />
+                <span className="min-w-0 break-words">{t('common.session.copyMarkdown')}</span>
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() => {
                   renameFromMenuRef.current = true;

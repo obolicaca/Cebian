@@ -30,6 +30,7 @@ export const ENVELOPE_TAGS = [
   'slash-prompt',
   'selected-skills',
   'tab-reference-data',
+  'history-references',
   'user-request',
 ] as const;
 

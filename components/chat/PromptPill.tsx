@@ -2,7 +2,7 @@ import { FileText } from 'lucide-react';
 
 /** Shared visual for inline Prompt references (composer widget + previews). */
 export const PROMPT_PILL_CLASS =
-  'chat-inline-pill bg-success/10 font-medium text-success';
+  'chat-inline-pill bg-success/10 text-success';
 
 /** Lucide `file-text` icon markup for non-React contexts (CodeMirror widget DOM). */
 export const PROMPT_PILL_ICON_SVG =

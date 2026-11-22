@@ -21,7 +21,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 } from '@/components/ui/context-menu';
-import { FileTree, type FileTreeHandle } from '@/components/editor/FileTree';
+import { FileTree, type FileTreeHandle, type FileTreeNodeActions } from '@/components/editor/FileTree';
 import { EditorPanel } from './EditorPanel';
 import { useIsDark } from '@/hooks/useIsDark';
 import type { TemplateScene } from '@/lib/ai-config/template';
@@ -46,6 +46,7 @@ export interface FileWorkspaceAction {
   separatorBefore?: boolean;
   /** Disable the action (greyed out in toolbar; non-clickable in menus). */
   disabled?: boolean;
+  destructive?: boolean;
 }
 
 export interface FileWorkspaceHandle {
@@ -87,6 +88,8 @@ export interface FileWorkspaceProps {
   defaultPanelWidth?: number;
   /** Section-contributed actions (rendered in toolbar + right-click menu). */
   toolbarActions?: FileWorkspaceAction[];
+  toolbarActionsInOverflow?: boolean;
+  nodeActions?: FileTreeNodeActions;
   /**
    * Compact / master-detail mode. When true, only one panel is visible at a
    * time: file list when no selection, editor (with a back button) when a
@@ -110,12 +113,15 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
   panelWidthStorage,
   defaultPanelWidth = 280,
   toolbarActions,
+  toolbarActionsInOverflow = false,
+  nodeActions,
   compactMode = false,
   className,
   emptyState,
 }, ref) {
   const isDark = useIsDark();
 
+  const [contextId, setContextId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -237,10 +243,10 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
 
   const INLINE_LIMIT = 3;
   const INLINE_KEEP = 2;
-  const inlineToolbar = allInlineActions.length <= INLINE_LIMIT
+  const inlineToolbar = toolbarActionsInOverflow ? builtinActions : allInlineActions.length <= INLINE_LIMIT
     ? allInlineActions
     : allInlineActions.slice(0, INLINE_KEEP);
-  const overflowToolbar = allInlineActions.length <= INLINE_LIMIT
+  const overflowToolbar = toolbarActionsInOverflow ? customActions : allInlineActions.length <= INLINE_LIMIT
     ? []
     : allInlineActions.slice(INLINE_KEEP);
 
@@ -304,7 +310,7 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
                         type="button"
                         onClick={() => runAction(a)}
                         disabled={a.disabled}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-sm text-[13px] hover:bg-accent text-left disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-sm text-[13px] hover:bg-accent text-left disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed ${a.destructive ? 'text-destructive' : ''}`}
                       >
                         <Icon className="size-3.5 shrink-0" />
                         <span className="truncate">{a.label}</span>
@@ -320,7 +326,11 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
         {/* File tree with right-click on empty area */}
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0" onContextMenuCapture={(event) => {
+              if (!nodeActions?.contextMenu) return;
+              const row = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-file-tree-node]') : null;
+              setContextId(row?.dataset.fileTreeNode ?? null);
+            }}>
               <FileTree
                 ref={fileTreeRef}
                 root={root}
@@ -329,10 +339,12 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
                 refreshKey={refreshKey}
                 searchTerm={search || undefined}
                 allowNewFolder={allowNewFolder}
+                nodeActions={nodeActions}
               />
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
+            {nodeActions?.contextMenu ? nodeActions.contextMenu(contextId ? fileTreeRef.current?.getNode(contextId) ?? null : null, fileTreeRef.current) : <>
             <ContextMenuItem onClick={() => fileTreeRef.current?.createFile(undefined, newFileTemplate)}>
               <FilePlus className="size-3.5 mr-2" /> {t('common.newFile')}
             </ContextMenuItem>
@@ -352,6 +364,7 @@ export const FileWorkspace = forwardRef<FileWorkspaceHandle, FileWorkspaceProps>
                 </Fragment>
               );
             })}
+            </>}
           </ContextMenuContent>
         </ContextMenu>
       </div>
