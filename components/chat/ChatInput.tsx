@@ -22,6 +22,7 @@ import { startElementPicker, cancelElementPicker } from '@/lib/browser/element-p
 import { scanPrompts, scanSkillIndex, type PromptMeta, type SkillMeta } from '@/lib/ai-config/scanner';
 import { resolveSelectedSkills, type SelectedSkill } from '@/lib/ai-config/selected-skills';
 import { findSkillTokens, findSlashToken, stripSkillTokens, tokensToSkills, type SlashToken } from '@/lib/ai-config/skill-tokens';
+import { quoteToken } from '@/lib/agent/quote-tokens';
 import { ComposerEditor, type ComposerEditorHandle } from '@/components/chat/ComposerEditor';
 import { replaceTemplateVars } from '@/lib/ai-config/template';
 import { gatherTemplateVars } from '@/lib/ai-config/template-vars-sidepanel';
@@ -87,6 +88,7 @@ interface ChatInputProps {
  *  同时仍由 ChatInput 持有 value 状态。 */
 export interface ChatInputHandle {
   fill: (text: string) => void;
+  insertQuote: (text: string) => boolean;
   /** 聊天页拖放区放下的文件；`folders` 是被排除的文件夹名，只用来提示。 */
   addFiles: (files: readonly File[], folders: readonly string[]) => void;
 }
@@ -960,7 +962,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   };
 
   // 不传依赖：addDroppedFiles 每次渲染都会换新，句柄跟着重建拿到最新闭包，重建一个小对象的开销可以忽略
-  useImperativeHandle(ref, () => ({ fill, addFiles: addDroppedFiles }));
+  useImperativeHandle(ref, () => ({
+    fill,
+    addFiles: addDroppedFiles,
+    insertQuote: (text) => {
+      if (isDispatchingRef.current || !editorRef.current) return false;
+      const editor = editorRef.current;
+      const { end } = editor.getSelection();
+      editor.replaceRange(end, end, quoteToken(text) + ' ');
+      editor.focus();
+      return true;
+    },
+  }));
 
   return (
     <footer className="px-4 py-4 border-t border-border bg-background relative" onKeyDown={handleFooterKeyDown}>

@@ -1,4 +1,5 @@
 import { compactTabText, findTabReferences, type TabReference } from '@/lib/agent/tab-references';
+import { findQuoteTokens } from '@/lib/agent/quote-tokens';
 import { attachPillPreview, attachTabPreview, TAB_PILL_LAYOUT } from './tab-preview';
 
 /**
@@ -80,6 +81,31 @@ class SlashPromptWidget extends WidgetType {
   override ignoreEvent() { return false; }
 }
 
+class QuotePillWidget extends WidgetType {
+  private detach?: () => void;
+  constructor(readonly quote: string) { super(); }
+  override eq(other: QuotePillWidget) { return other.quote === this.quote; }
+  override toDOM(view: EditorView) {
+    const pill = document.createElement('span');
+    pill.className = 'group rounded-md bg-info/10 px-1.5 text-info ' + TAB_PILL_LAYOUT;
+    pill.dataset.quotePill = 'true';
+    const icon = document.createElement('span');
+    icon.className = 'relative mr-1 inline-block size-3.5';
+    const glyph = document.createElement('span');
+    glyph.className = 'absolute inset-0 group-hover:invisible group-focus-within:invisible';
+    glyph.textContent = '❝';
+    icon.append(glyph, pillRemoveButton(t('chat.removeQuote'), () => {
+      const from = view.posAtDOM(pill);
+      const token = findQuoteTokens(view.state.doc.toString()).find((item) => item.from === from);
+      if (token) removePillRange(view, token.from, token.to);
+    }));
+    pill.append(icon, document.createTextNode(compactTabText(this.quote, 28)));
+    this.detach = attachPillPreview(pill, this.quote, undefined, undefined, true);
+    return pill;
+  }
+  override destroy() { this.detach?.(); }
+}
+
 class TabPillWidget extends WidgetType {
   private detach?: () => void;
   constructor(readonly reference: TabReference, readonly failure?: string) { super(); }
@@ -143,6 +169,9 @@ function buildDecorations(state: EditorState, cfg: PillConfig): { decorations: D
     }).range(token.from, token.to));
   for (const token of findTabReferences(state.doc.toString())) {
     pills.push(Decoration.replace({ widget: new TabPillWidget(token.ref, cfg.tabFailures?.[token.ref.id]) }).range(token.from, token.to));
+  }
+  for (const token of findQuoteTokens(state.doc.toString())) {
+    pills.push(Decoration.replace({ widget: new QuotePillWidget(token.quote) }).range(token.from, token.to));
   }
   const ranges = [...pills];
   if (cfg.slashPromptName) {

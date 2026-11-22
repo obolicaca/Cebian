@@ -9,9 +9,11 @@ import { validateSkillName } from '@/lib/ai-config/skill-validator';
 import { t } from '@/lib/i18n';
 import type { ToolGate, PermissionRequestDetails } from '@/lib/agent/tool-permissions';
 import { runInSandbox } from './sandbox-rpc';
+import { executePythonSkill } from './run-python-skill';
 import { SkillSnapshotRegistry, createSkillSnapshot } from './skill-snapshot';
 
 const skillSnapshots = new SkillSnapshotRegistry();
+const PYTHON_PERMISSION = 'python.offline';
 
 // ─── Tool definition ───
 
@@ -20,7 +22,7 @@ const RunSkillParameters = Type.Object({
     description: 'Skill folder name (e.g. "web-summary"). Must match a directory under ~/.cebian/skills/.',
   }),
   script: Type.String({
-    description: 'Relative path to JS file within the skill directory (e.g. "scripts/extract.js").',
+    description: 'Relative path to a Skill script (e.g. "scripts/extract.js" or "scripts/process.py").',
   }),
   args: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
     description: 'Arguments passed to the script, accessible via the `args` variable.',
@@ -35,6 +37,7 @@ export const runSkillTool: AgentTool<typeof RunSkillParameters> = {
   label: 'Run Skill',
   description:
     'Execute a JavaScript file from a skill\'s scripts/ directory in a sandboxed environment. ' +
+    'On Chrome, scripts/*.py run offline in an isolated Pyodide worker after explicit Python authorization. Python receives args, returns a JSON-compatible result variable, and can print to stdout. ' +
     'The script runs with chrome.* APIs as declared in the skill\'s metadata.permissions. ' +
     'If the skill declares no permissions, only basic JS APIs (fetch, JSON, crypto, etc.) are available. ' +
     'If the skill declares "page.executeJs" permission, an executeInPage(code) async function is available ' +
@@ -94,7 +97,9 @@ async function executeRunSkill(
 
   signal?.throwIfAborted();
 
-  const result = await runInSandbox(code, args as Record<string, unknown>, permissions, skill, sessionId, tabId);
+  const result = script.endsWith('.py')
+    ? await executePythonSkill(code, args, signal)
+    : await runInSandbox(code, args as Record<string, unknown>, permissions, skill, sessionId, tabId);
   const serialized = result !== undefined ? JSON.stringify(result, null, 2) : '(no return value)';
 
   return {
@@ -168,6 +173,11 @@ async function resolveSkillRun(
   const { normalizedSkillDir, permissions, skillMd } = await resolveSkillPermissions(skill);
 
   const normalizedScriptPath = normalizePath(`${normalizedSkillDir}/${script}`);
+  const isPython = script.endsWith('.py');
+  if (isPython && (!import.meta.env.CHROME || !script.startsWith('scripts/') ||
+    normalizedScriptPath !== `${normalizedSkillDir}/${script}`)) {
+    throw new Error('Python requires Chrome and a script under the Skill scripts/ directory.');
+  }
   if (!normalizedScriptPath.startsWith(normalizedSkillDir + '/')) {
     throw new Error('Script path escapes skill directory.');
   }
@@ -177,7 +187,7 @@ async function resolveSkillRun(
   const rawScript = await vfs.readFile(normalizedScriptPath, 'utf8');
   const code = typeof rawScript === 'string' ? rawScript : new TextDecoder().decode(rawScript as Uint8Array);
 
-  return { permissions, skillMd, scriptPath: script, script: code, code };
+  return { permissions: isPython ? [PYTHON_PERMISSION] : permissions, skillMd, scriptPath: script, script: code, code };
 }
 
 // ─── Permission gate (registered into session-manager's PERMISSION_GATES) ───
@@ -205,13 +215,16 @@ export const runSkillGate: ToolGate = {
       return { needsGrant: false };
     }
     const { permissions } = resolved;
-    skillSnapshots.set(toolCallId, await createSkillSnapshot(resolved));
+    const snapshot = await createSkillSnapshot(resolved);
+    skillSnapshots.set(toolCallId, snapshot);
 
     if (permissions.length === 0) return { needsGrant: false };
 
     const grants = await getSkillGrants();
-    const grant = grants[skill];
-    if (grant?.granted === 'always' && permissionsMatch(grant.permissions, permissions)) {
+    const isPython = script.endsWith('.py');
+    const grant = grants[isPython ? `python:${skill}` : skill];
+    const expected = isPython ? [...permissions, snapshot.digest] : permissions;
+    if (grant?.granted === 'always' && permissionsMatch(grant.permissions, expected)) {
       return { needsGrant: false };
     }
 
@@ -225,10 +238,11 @@ export const runSkillGate: ToolGate = {
   },
 
   async persistGrant(args, toolCallId): Promise<void> {
-    const { skill } = args as Static<typeof RunSkillParameters>;
+    const { skill, script } = args as Static<typeof RunSkillParameters>;
     try {
-      const { permissions } = skillSnapshots.get(toolCallId);
-      await setSkillGrant(skill, permissions);
+      const { permissions, digest } = skillSnapshots.get(toolCallId);
+      const isPython = script.endsWith('.py');
+      await setSkillGrant(isPython ? `python:${skill}` : skill, isPython ? [...permissions, digest] : permissions);
     } catch (err) {
       // 持久化失败不阻断本次已授权的执行——降级为「仅本次」。
       console.warn('[run-skill] failed to persist skill grant:', err);

@@ -14,8 +14,9 @@ import {
  *
  * 仅侧边栏 entrypoint 使用，故住在 entrypoints/sidepanel/。
  */
-export function useSidePanelToggle(): void {
+export function useSidePanelToggle(enabled = true): void {
   useEffect(() => {
+    if (!enabled) return;
     let windowId: number | null = null;
     let unsubscribe: (() => void) | undefined;
     let cancelled = false;
@@ -43,5 +44,5 @@ export function useSidePanelToggle(): void {
       unsubscribe?.();
       if (windowId != null) reportSidePanelGone(windowId);
     };
-  }, []);
+  }, [enabled]);
 }

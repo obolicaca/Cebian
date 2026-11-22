@@ -64,7 +64,7 @@ function CodeBlock({ node, children }: { node?: HastElement; children?: ReactNod
 
   return (
     <div className="my-2 overflow-hidden rounded-md border border-border/60 bg-background">
-      <div className="flex items-center justify-between pl-3 pr-1 py-0.5 text-xs text-muted-foreground border-b border-border/40">
+      <div data-copy-ignore className="flex items-center justify-between pl-3 pr-1 py-0.5 text-xs text-muted-foreground border-b border-border/40">
         <span className="font-mono">{lang || t('common.code')}</span>
         <CopyButton text={text} />
       </div>

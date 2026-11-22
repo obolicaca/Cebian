@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { HashRouter } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { DialogOutlet } from '@/components/dialogs/outlet';
 import { ConfirmOutlet } from '@/components/dialogs/confirm-outlet';
 import { SettingsRoutes } from '@/entrypoints/sidepanel/pages/settings';
 import { useStorageItem } from '@/hooks/useStorageItem';
@@ -57,6 +58,7 @@ export default function App() {
           <SettingsRoutes basePath="" />
         </HashRouter>
         <Toaster theme={resolveTheme(theme)} />
+        <DialogOutlet />
         <ConfirmOutlet />
       </div>
     </TooltipProvider>

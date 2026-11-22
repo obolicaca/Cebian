@@ -26,14 +26,21 @@ export function attachTabPreview(anchor: HTMLElement, reference: TabReference) {
     reference.summary ? undefined : () => readDescription(reference));
 }
 
-export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUrl?: string, loadDescription?: () => Promise<string>) {
+export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUrl?: string, loadDescription?: () => Promise<string>, fullText = false) {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let preview: HTMLDivElement | undefined;
 
   const hide = () => {
     clearTimeout(timer);
+    clearTimeout(closeTimer);
     preview?.remove();
     preview = undefined;
+  };
+  const scheduleHide = () => {
+    clearTimeout(timer);
+    if (!fullText || !preview) hide();
+    else closeTimer = setTimeout(hide, 180);
   };
   const show = () => {
     hide();
@@ -42,10 +49,15 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUr
       const panel = document.createElement('div');
       preview = panel;
       panel.role = 'tooltip';
-      panel.className = 'pointer-events-none fixed z-50 w-60 max-w-[calc(100vw-16px)] rounded-md border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md';
+      panel.className = 'fixed z-50 w-60 max-w-[calc(100vw-16px)] rounded-md border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md ' +
+        (fullText ? 'max-h-[min(18rem,50vh)] overflow-y-auto' : 'pointer-events-none');
+      if (fullText) {
+        panel.addEventListener('pointerenter', () => clearTimeout(closeTimer));
+        panel.addEventListener('pointerleave', hide);
+      }
       const description = document.createElement('div');
-      description.className = 'break-words';
-      description.textContent = compactTabText(summary, PREVIEW_DESCRIPTION_LIMIT);
+      description.className = fullText ? 'whitespace-pre-wrap break-words' : 'break-words';
+      description.textContent = fullText ? summary : compactTabText(summary, PREVIEW_DESCRIPTION_LIMIT);
       panel.append(description);
       if (sourceUrl) {
         const url = document.createElement('div');
@@ -72,10 +84,10 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, sourceUr
   };
 
   anchor.addEventListener('pointerenter', show);
-  anchor.addEventListener('pointerleave', hide);
+  anchor.addEventListener('pointerleave', scheduleHide);
   return () => {
     hide();
     anchor.removeEventListener('pointerenter', show);
-    anchor.removeEventListener('pointerleave', hide);
+    anchor.removeEventListener('pointerleave', scheduleHide);
   };
 }

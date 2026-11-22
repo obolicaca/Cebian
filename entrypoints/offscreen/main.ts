@@ -5,6 +5,8 @@ import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { runScriptHookInFreshSandbox, type ScriptHook } from './transform-sandbox';
+import { cancelPythonSkill, packageSkillInPython, runPythonSkill } from './python-skill';
+import type { PythonSkillCancelRequest, PythonSkillPackageRequest, PythonSkillRunRequest } from '@/lib/tools/python-skill-protocol';
 import {
   handlePdfInfo,
   handlePdfText,
@@ -17,6 +19,9 @@ import {
 // ─── Message types ───
 
 export type OffscreenRequest =
+  | PythonSkillPackageRequest
+  | PythonSkillRunRequest
+  | PythonSkillCancelRequest
   | { type: 'html-to-markdown'; html: string; readability?: { url: string } }
   | { type: 'crop-image'; imageData: string; crop: { x: number; y: number; width: number; height: number } }
   | { type: 'pdf-info'; url: string }
@@ -134,7 +139,7 @@ async function cropImage(
 // ─── Message listener ───
 
 chrome.runtime.onMessage.addListener(
-  (message: OffscreenRequest | SandboxRelayMessage, _sender, sendResponse) => {
+  (message: OffscreenRequest | SandboxRelayMessage, sender, sendResponse) => {
     // ─── Sandbox relay: forward messages to/from sandbox iframe ───
     if ('type' in message && typeof message.type === 'string' && message.type.startsWith('sandbox:')) {
       const sandboxMsg = message as SandboxRelayMessage;
@@ -160,6 +165,24 @@ chrome.runtime.onMessage.addListener(
 
     // ─── Original offscreen handlers ───
     const req = message as OffscreenRequest;
+    if (req.type === 'python-skill:run' || req.type === 'python-skill:cancel') {
+      if (sender.id !== chrome.runtime.id || sender.tab || typeof req.id !== 'string') return false;
+      if (req.type === 'python-skill:cancel') {
+        cancelPythonSkill(req.id);
+        return false;
+      }
+      if (typeof req.code !== 'string' || req.code.length > 131072 ||
+        typeof req.argsJson !== 'string' || req.argsJson.length > 65536) {
+        sendResponse({ error: 'Invalid Python request' });
+        return false;
+      }
+      void runPythonSkill(req).then(sendResponse);
+      return true;
+    }
+    if (req.type === 'python-skill:package') {
+      void packageSkillInPython(req).then(sendResponse);
+      return true;
+    }
     if (req.type === 'transform:run') {
       void runScriptHookInFreshSandbox(req.script, req.hook, req.args).then(sendResponse);
       return true;

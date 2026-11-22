@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sun, Moon, SunMoon, Settings, SquarePen, History, Pencil } from 'lucide-react';
+import { Maximize2, Minimize2, Sun, Moon, SunMoon, Settings, SquarePen, History, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InlineRenameInput } from '@/components/common/InlineRenameInput';
 import { MAX_SESSION_TITLE_LENGTH } from '@/lib/agent/session-title';
@@ -19,17 +19,20 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onNewChat: () => void;
   onOpenHistory: () => void;
+  onExpand?: () => void;
+  expanded?: boolean;
   /** 提供时标题可点击进入行内改名（仅已有会话且标题非空时由 App 传入）。 */
   onRename?: (title: string) => void;
 }
 
-export function Header({ title, isNewChat, theme, onToggleTheme, onOpenSettings, onNewChat, onOpenHistory, onRename }: HeaderProps) {
+export function Header({ title, isNewChat, theme, onToggleTheme, onOpenSettings, onNewChat, onOpenHistory, onRename, onExpand, expanded }: HeaderProps) {
   const [renaming, setRenaming] = useState(false);
   // 编辑途中入口被收回（切到新会话 / 设置）：退出编辑态，别让输入框悬在一个不能改名的页面上。
   useEffect(() => {
     if (!onRename) setRenaming(false);
   }, [onRename]);
   const renameLabel = t('common.rename');
+  const expandLabel = t(expanded ? 'common.returnToSidePanel' : 'common.expandChat');
 
   return (
     <header className="flex items-center justify-between px-5 py-4 border-b border-border bg-background/80 backdrop-blur-xl z-10">
@@ -83,6 +86,14 @@ export function Header({ title, isNewChat, theme, onToggleTheme, onOpenSettings,
       )}
 
       <div className="flex gap-2">
+        {onExpand && <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-xs" aria-label={expandLabel} onClick={onExpand}>
+              {expanded ? <Minimize2 className="size-4.5" /> : <Maximize2 className="size-4.5" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{expandLabel}</TooltipContent>
+        </Tooltip>}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

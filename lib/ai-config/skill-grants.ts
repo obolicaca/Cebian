@@ -47,8 +47,9 @@ export async function setSkillGrant(skillName: string, permissions: string[]): P
  */
 export async function clearSkillGrant(skillName: string): Promise<void> {
   const grants = await getSkillGrants();
-  if (!(skillName in grants)) return;
+  if (!(skillName in grants) && !(`python:${skillName}` in grants)) return;
   delete grants[skillName];
+  delete grants[`python:${skillName}`];
   await chrome.storage.local.set({ [GRANTS_KEY]: grants });
 }
 

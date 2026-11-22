@@ -17,6 +17,7 @@ import { fsListTool } from './fs-list';
 import { fsSearchTool } from './fs-search';
 import { fsSaveUrlTool } from './fs-save-url';
 import { createSessionRunSkillTool } from './run-skill';
+import { createPackageBrowserTabsTool } from './package-browser-tabs';
 import { chromeApiTool } from './chrome-api-tool';
 import { createWebSearchTool } from './web-search';
 import { SessionToolContext } from './session-context';
@@ -88,7 +89,8 @@ export async function buildSessionToolArray(
   const [mcpTools, searchConfig] = await Promise.all([discoverMCPTools(), searchEnginesConfig.getValue()]);
   const runSkill = createSessionRunSkillTool(ctx.sessionId);
   const webSearch = createWebSearchTool(enabledSearchEngines(resolveSearchEnginesConfig(searchConfig)));
-  return [...ctx.getInteractiveTools(), ...sharedTools, runSkill, webSearch, ...mcpTools];
+  const pythonTools = import.meta.env.CHROME ? [createPackageBrowserTabsTool(ctx.sessionId)] : [];
+  return [...ctx.getInteractiveTools(), ...sharedTools, runSkill, ...pythonTools, webSearch, ...mcpTools];
 }
 
 /**

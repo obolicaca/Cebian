@@ -11,6 +11,8 @@ common:
   # 本檔案的 BCP-47 語言標籤（非顯示文案，不要翻譯）：執行時據此得知介面實際呈現的語言，用於 <html lang>。
   languageTag: "zh-TW"
   newChat: "新對話"
+  expandChat: "最大化展開對話"
+  returnToSidePanel: "返回側邊欄"
   send: "傳送"
   history: "歷史記錄"
   # 歷史清單依最後活動時間分組
@@ -617,6 +619,12 @@ settings:
 
 # ─── 聊天 ───
 chat:
+  selectionActions: "選取文字動作"
+  copyPlainText: "複製純文字"
+  copySelectionMarkdown: "複製 Markdown"
+  quoteSelection: "引用"
+  quoteReply: "引用整則回覆"
+  removeQuote: "移除引用"
   composer:
     placeholder: "輸入訊息，按@選擇分頁，或按/呼叫技能"
     pickElement: "選擇元素"
@@ -749,6 +757,7 @@ chat:
     # 該請求已無法再被回應時顯示（例如待決期間背景被重新啟動）。
     expired: "此授權請求已失效"
     perm:
+      pythonOffline: "在隔離的瀏覽器 Worker 中離線執行此 Python 腳本"
       pageExecuteJs: "在你的網頁中執行腳本 —— 讀取和變更頁面內容，並借助你的登入狀態進行操作"
       vfsRead: "讀取該技能自己工作區資料夾中的檔案"
       vfsWrite: "讀寫該技能自己工作區資料夾中的檔案"

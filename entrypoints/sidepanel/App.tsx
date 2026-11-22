@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, matchPath, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { browser } from 'wxt/browser';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { DialogOutlet } from '@/components/dialogs/outlet';
@@ -12,7 +13,7 @@ import { useStorageItem } from '@/hooks/useStorageItem';
 import { useChangelogOnUpdate } from '@/hooks/useChangelogOnUpdate';
 import { useChatAppearance } from '@/hooks/useChatAppearance';
 import { useFileDropGuard } from '@/hooks/useFileDropZone';
-import { themePreference } from '@/lib/persistence/storage';
+import { pendingSidePanelHandoff, themePreference } from '@/lib/persistence/storage';
 import { chatAppearanceStyle } from '@/lib/ui/chat-appearance';
 import { sessionListChannel } from '@/lib/agent/session-list-channel';
 import { t } from '@/lib/i18n';
@@ -45,7 +46,7 @@ function applyTheme(resolved: 'dark' | 'light') {
  */
 let lastChatPath = '/chat/new';
 
-function App() {
+function App({ standaloneTab }: { standaloneTab?: Pick<chrome.tabs.Tab, 'id' | 'windowId' | 'openerTabId'> }) {
   const [theme, setTheme] = useStorageItem(themePreference, 'system');
   const [themeReady, setThemeReady] = useState(false);
   // 对话区字号 / 字体：与主题一样先读出再渲染，避免首帧按默认字号画完再跳变
@@ -57,14 +58,14 @@ function App() {
   const location = useLocation();
 
   // 参与悬浮球的 open/close toggle：上报开启态 + 订阅「自关」指令。
-  useSidePanelToggle();
+  useSidePanelToggle(!standaloneTab);
 
   // 「在侧边栏继续」交接：仅当 handoff 的 windowId 命中本窗口时跳转（多窗口不误跳）。
   const goToSession = useCallback(
     (sessionId: string) => navigate(`/chat/${sessionId}`),
     [navigate],
   );
-  useSidePanelHandoff(goToSession);
+  useSidePanelHandoff(goToSession, !standaloneTab);
 
   // 记住最近访问过的聊天路由（/chat/new 或 /chat/:sessionId），供退出设置时回到原处。
   useEffect(() => {
@@ -136,6 +137,41 @@ function App() {
   // sessionTitle → onTitleChange）；失败时页头自然停在旧标题上，这就是回滚——历史面板
   // 关着时它的失败 toast 没人听，页头若乐观改了就再没机会纠正。
   const currentSessionId = matchPath('/chat/:sessionId', location.pathname)?.params.sessionId;
+  const handleExpandChat = async () => {
+    try {
+      const window = await browser.windows.getCurrent();
+      if (window.id === undefined) throw new Error('Browser window unavailable');
+      const [opener] = await browser.tabs.query({ active: true, windowId: window.id });
+      const url = new URL(browser.runtime.getURL('/sidepanel.html'));
+      if (currentSessionId && currentSessionId !== 'new') url.searchParams.set('session', currentSessionId);
+      if (window.state === 'normal') url.searchParams.set('restore', 'normal');
+      await browser.tabs.create({ windowId: window.id, openerTabId: opener?.id, url: url.href });
+      if (window.state === 'normal') await browser.windows.update(window.id, { state: 'maximized' });
+    } catch {
+      toast.error(t('errors.openTabFailed'));
+    }
+  };
+  const handleReturnToSidePanel = async () => {
+    const windowId = standaloneTab?.windowId;
+    if (!standaloneTab || windowId === undefined) return;
+    try {
+      // Chrome requires sidePanel.open to start inside the click's user gesture.
+      await chrome.sidePanel.open(standaloneTab.openerTabId === undefined
+        ? { windowId }
+        : { tabId: standaloneTab.openerTabId }).catch(() => chrome.sidePanel.open({ windowId }));
+      await pendingSidePanelHandoff.setValue({ windowId, sessionId: currentSessionId ?? 'new' });
+      const candidates = (await browser.tabs.query({ windowId })).filter((tab) => tab.id !== standaloneTab.id);
+      const target = candidates.find((tab) => tab.id === standaloneTab.openerTabId) ?? candidates[0];
+      if (target?.id !== undefined) await browser.tabs.update(target.id, { active: true });
+      else await browser.tabs.create({ windowId });
+      if (new URLSearchParams(globalThis.location.search).get('restore') === 'normal') {
+        const window = await browser.windows.get(windowId);
+        if (window.state === 'maximized') await browser.windows.update(windowId, { state: 'normal' });
+      }
+    } catch {
+      toast.error(t('errors.openTabFailed'));
+    }
+  };
   const canRename = !!currentSessionId && currentSessionId !== 'new' && chatTitle !== '';
   const handleRenameTitle = useCallback((title: string) => {
     if (!currentSessionId || currentSessionId === 'new') return;
@@ -164,6 +200,10 @@ function App() {
             onOpenSettings={() => navigate('/settings')}
             onNewChat={handleNewChat}
             onOpenHistory={() => setHistoryOpen(true)}
+            expanded={!!standaloneTab}
+            onExpand={!standaloneTab || typeof chrome.sidePanel !== 'undefined'
+              ? () => void (standaloneTab ? handleReturnToSidePanel() : handleExpandChat())
+              : undefined}
           />
         )}
 

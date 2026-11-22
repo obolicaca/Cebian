@@ -9,6 +9,7 @@ import { MessageMetaRow, type MessageMetaProps } from '@/components/chat/Message
 import { extractUserText, extractUserAttachments, extractSlashPrompt, extractSelectedSkillNames } from '@/lib/agent/message-helpers';
 import { compactTabText, describeTabReferences, findTabReferences, tabLink, type TabReference } from '@/lib/agent/tab-references';
 import { attachTabPreview, TAB_PILL_LAYOUT } from './tab-preview';
+import { displayQuotedText } from '@/lib/agent/quote-tokens';
 import { showDialog } from '@/lib/ui/dialog';
 import { RECORDING_MIME } from '@/lib/agent/attachments';
 import { t } from '@/lib/i18n';
@@ -189,11 +190,11 @@ export function UserMessageBubble({
   const bubbleParts = findTabReferences(bubbleText).flatMap(({ ref, from, to }) => {
     const preceding = bubbleText.slice(tabCursor, from);
     tabCursor = to;
-    return [preceding, <HistoryTabPill key={ref.id} reference={ref} />];
+    return [displayQuotedText(preceding), <HistoryTabPill key={ref.id} reference={ref} />];
   });
-  bubbleParts.push(bubbleText.slice(tabCursor));
+  bubbleParts.push(displayQuotedText(bubbleText.slice(tabCursor)));
   // Skill 引用以 pill 形式嵌在气泡文字流里（与输入框一致）；复制时还原成 `/名字` 文本。
-  const copyText = [...selectedSkillNames.map((name) => `/${name}`), describeTabReferences(bubbleText)].filter(Boolean).join(' ');
+  const copyText = [...selectedSkillNames.map((name) => `/${name}`), displayQuotedText(describeTabReferences(bubbleText))].filter(Boolean).join(' ');
   // 一个字没打、也没挂提示词 / Skill 的空消息不渲染气泡框，免得留一个空壳。
   const hasBubble = bubbleText.length > 0 || selectedSkillNames.length > 0 || children != null;
 
@@ -407,6 +408,22 @@ function extractSpeakText(el: HTMLElement | null): string {
   return (target.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
+function extractReplyQuote(el: HTMLElement | null): string {
+  const source = el?.querySelector('[data-quote-source]');
+  if (!source) return '';
+  const clone = source.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('button, [data-copy-ignore], [aria-hidden="true"]').forEach((node) => node.remove());
+  const read = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (!(node instanceof Element)) return '';
+    if (node.tagName === 'BR') return '\n';
+    if (node.tagName === 'PRE') return '\n' + node.textContent + '\n';
+    const text = Array.from(node.childNodes, read).join('');
+    return /^(H[1-6]|P|LI|BLOCKQUOTE|TR)$/.test(node.tagName) ? text + '\n' : text;
+  };
+  return read(clone).trim();
+}
+
 export function AgentMessage({
   children,
   isStreaming,
@@ -414,6 +431,7 @@ export function AgentMessage({
   meta,
   copyText,
   onRetry,
+  onQuote,
   onFork,
   branch,
 }: {
@@ -422,11 +440,12 @@ export function AgentMessage({
   showHeader?: boolean;
   /** Meta is rendered as soon as `!isStreaming`; the copy button inside the
    * row is gated on `copyText` (skipped for pure tool-call turns). */
-  meta?: Omit<MessageMetaProps, 'text' | 'onRetry' | 'onFork' | 'branchSwitcher'>;
+  meta?: Omit<MessageMetaProps, 'text' | 'onRetry' | 'onQuote' | 'onFork' | 'branchSwitcher'>;
   copyText?: string;
   /** When provided, a retry button is shown in the meta row. Caller decides
    *  eligibility (last turn-closing assistant, agent idle). */
   onRetry?: () => void;
+  onQuote?: (text: string) => void;
   /** 提供时在操作行显示「分叉」按钮（issue #60）。资格由调用方判定（收尾回复且已落树）。 */
   onFork?: () => void;
   /** 当前回复存在并列版本时，在操作行最左侧展示分支导航。 */
@@ -451,12 +470,16 @@ export function AgentMessage({
           />
         )}
       </div>
-      {!isStreaming && (meta || copyText || onRetry || onFork || branch) && (
+      {!isStreaming && (meta || copyText || onRetry || onQuote || onFork || branch) && (
         <MessageMetaRow
           {...(meta ?? {})}
           text={copyText}
           getSpeakText={() => extractSpeakText(contentRef.current)}
           onRetry={onRetry}
+          onQuote={onQuote ? () => {
+            const quote = extractReplyQuote(contentRef.current);
+            if (quote) onQuote(quote);
+          } : undefined}
           onFork={onFork}
           branchSwitcher={branch ? <BranchSwitcher {...branch} /> : undefined}
         />
@@ -470,7 +493,7 @@ export function AgentTextBlock({ content, streaming }: { content: string; stream
   // data-speech-content：标记「可朗读的回复正文」，供 extractSpeakText 只读此子树，
   // 从而跳过 thinking / 工具卡片 / 错误提示等同处一个容器下的其它块。
   return (
-    <div data-speech-content className="chat-text-body chat-font">
+    <div data-speech-content data-quote-source={streaming ? undefined : true} className="chat-text-body chat-font">
       <MarkdownRenderer content={content} normalizeMath streaming={streaming} />
     </div>
   );

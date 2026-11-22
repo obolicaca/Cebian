@@ -13,6 +13,8 @@ common:
   # which language is actually rendered, for <html lang>.
   languageTag: "en"
   newChat: "New chat"
+  expandChat: "Expand chat"
+  returnToSidePanel: "Return to side panel"
   send: "Send"
   history: "History"
   # History list date groupings (by last-activity time)
@@ -622,6 +624,12 @@ settings:
 
 # ─── Chat surface ───
 chat:
+  selectionActions: "Text selection actions"
+  copyPlainText: "Copy plain text"
+  copySelectionMarkdown: "Copy Markdown"
+  quoteSelection: "Quote"
+  quoteReply: "Quote entire reply"
+  removeQuote: "Remove quote"
   composer:
     placeholder: "Type a message, press @ to select tabs, or / to invoke a skill"
     pickElement: "Pick element"
@@ -755,6 +763,7 @@ chat:
     # was restarted while it was pending).
     expired: "This permission request has expired"
     perm:
+      pythonOffline: "Run this Python script offline in an isolated browser worker"
       pageExecuteJs: "Run scripts in your web pages — read and change page content, and act through your logged-in sessions"
       vfsRead: "Read files in this skill's own workspace folder"
       vfsWrite: "Read and write files in this skill's own workspace folder"

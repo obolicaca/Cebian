@@ -9,8 +9,9 @@ import { pendingSidePanelHandoff } from '@/lib/persistence/storage';
  * 面板可能刚被打开（写标记可能晚于挂载），故既在拿到 windowId 时读一次，也 watch 后续
  * 写入。仅侧边栏 entrypoint 使用。
  */
-export function useSidePanelHandoff(onSession: (sessionId: string) => void): void {
+export function useSidePanelHandoff(onSession: (sessionId: string) => void, enabled = true): void {
   useEffect(() => {
+    if (!enabled) return;
     let windowId: number | null = null;
     let cancelled = false;
 
@@ -38,5 +39,5 @@ export function useSidePanelHandoff(onSession: (sessionId: string) => void): voi
       cancelled = true;
       unwatch();
     };
-  }, [onSession]);
+  }, [onSession, enabled]);
 }

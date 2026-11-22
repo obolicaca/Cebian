@@ -10,6 +10,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { ChatInput, type ChatInputHandle } from '@/components/chat/ChatInput';
+import { ReplySelectionToolbar } from '@/components/chat/ReplySelectionToolbar';
 import { WelcomeScreen } from '@/components/chat/WelcomeScreen';
 import {
   UserMessageBubble,
@@ -114,6 +115,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
 
   // 句柄：欢迎页示例卡片通过它把 prompt 填入输入框；拖放区通过它交付放下的文件。
   const inputRef = useRef<ChatInputHandle>(null);
+  const selectionRoot = useRef<HTMLDivElement>(null);
 
   // 整个聊天页（消息区 + 输入框）都是文件拖放区。发送进行中不接收：那一刻的附件马上要被清空。
   const [composerDispatching, setComposerDispatching] = useState(false);
@@ -296,10 +298,10 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
   const sessionLoading = !isNewChat && routeSessionId !== activeSessionId;
 
   return (
-    <div className="flex-1 min-h-0 relative flex flex-col" {...fileDrop.zoneProps}>
+    <div className="relative mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" {...fileDrop.zoneProps}>
       <div className="flex-1 min-h-0 relative flex flex-col">
         <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
-          <div className="flex flex-col gap-4 p-5">
+          <div ref={selectionRoot} className="flex flex-col gap-4 p-5">
             {sessionLoading && (
               <div className="text-center text-sm text-muted-foreground py-12">
                 {t('chat.session.loading')}
@@ -477,6 +479,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
                   meta={meta}
                   copyText={copyText}
                   onRetry={onRetry}
+                  onQuote={copyText && !isError && !isAborted ? (quote) => inputRef.current?.insertQuote(quote) : undefined}
                   onFork={onFork}
                   branch={branch
                     ? {
@@ -693,6 +696,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
         onTakeQueued={takeQueued}
         onSendQueuedNow={sendQueuedNow}
       />
+      <ReplySelectionToolbar key={routeSessionId} root={selectionRoot} onQuote={(text) => inputRef.current?.insertQuote(text) ?? false} />
 
       {fileDrop.isOver && (
         // 纯视觉提示：pointer-events-none 让拖放事件照常落到下面的区域上

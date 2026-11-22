@@ -159,6 +159,7 @@ const CHROME_NS_I18N = {
  * 在 UI 渲染时调用——i18n 实时生效，不在后台冻结成字符串。
  */
 function describePermission(permission: string): string {
+  if (permission === 'python.offline') return t('chat.permission.perm.pythonOffline');
   const perm = parsePermission(permission);
   if (!perm) return permission;
 
