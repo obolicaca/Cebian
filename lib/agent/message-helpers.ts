@@ -11,6 +11,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { unescapeXml } from '@/lib/utils';
 import { SLASH_PROMPT_ONLY_REQUEST } from '@/lib/ai-config/slash-prompt';
 import { SELECTED_SKILLS_ONLY_REQUEST } from '@/lib/ai-config/selected-skills';
+import { readComposerDisplay, stripComposerDisplay } from '@/lib/agent/composer-display';
 import { USER_REQUEST_CLOSE, USER_REQUEST_OPEN, wrapUserRequest } from '@/lib/agent/prompt-envelope';
 import type { NetworkCaptureState } from '@/lib/recorder/network-types';
 
@@ -19,7 +20,7 @@ import type { NetworkCaptureState } from '@/lib/recorder/network-types';
 export interface ParsedUserAttachments {
   images: { data: string; mimeType: string }[];
   elements: { selector: string }[];
-  files: { name: string; type: string }[];
+  files: { name: string; type: string; content?: string }[];
   recordings: ParsedRecording[];
 }
 
@@ -115,7 +116,30 @@ function getRawUserText(msg: Message): string {
   return '';
 }
 
+export function extractComposerDisplay(msg: Message) {
+  return msg.role === 'user' ? readComposerDisplay(getRawUserText(msg)) : undefined;
+}
+
+export function stripComposerDisplayFromMessage(msg: Message): Message {
+  if (msg.role !== 'user') return msg;
+  if (typeof msg.content === 'string') {
+    const content = stripComposerDisplay(msg.content);
+    return content === msg.content ? msg : { ...msg, content };
+  }
+  if (!Array.isArray(msg.content)) return msg;
+  let changed = false;
+  const content = msg.content.map((block) => {
+    if (block.type !== 'text' || typeof block.text !== 'string') return block;
+    const text = stripComposerDisplay(block.text);
+    if (text === block.text) return block;
+    changed = true;
+    return { ...block, text };
+  });
+  return changed ? { ...msg, content } : msg;
+}
+
 const SLASH_PROMPT_RE = /<slash-prompt name="([^"]*)">\n?([\s\S]*?)\n?<\/slash-prompt>/;
+const SLASH_PROMPT_RE_G = new RegExp(SLASH_PROMPT_RE.source, 'g');
 
 /** Extract the user's actual input text from a structured user message.
  *  Reads the content of the <user-request> block.
@@ -146,17 +170,15 @@ export function extractSelectedSkillNames(msg: Message): string[] {
   return [...block.matchAll(/<skill name="([^"]*)"/g)].map((match) => unescapeXml(match[1]));
 }
 
-/** 取出这一轮携带的斜杠提示词（名字 + 正文），没有则返回 null。
+/** 取出这一轮携带的斜杠提示词（名字 + 正文，可多条，按出现顺序），没有则返回 []。
  *  与 `buildSlashPromptBlock` 反向对应；`name` 建块时按属性转义过，这里还原回去。 */
-export function extractSlashPrompt(msg: Message): { name: string; body: string } | null {
-  if (msg.role !== 'user') return null;
-  const match = getRawUserText(msg).match(SLASH_PROMPT_RE);
-  if (!match) return null;
-  return { name: unescapeXml(match[1]), body: match[2] };
+export function extractSlashPrompts(msg: Message): { name: string; body: string }[] {
+  if (msg.role !== 'user') return [];
+  return [...getRawUserText(msg).matchAll(SLASH_PROMPT_RE_G)].map((match) => ({ name: unescapeXml(match[1]), body: match[2] }));
 }
 
 const ELEMENT_RE = /<selected-element\s+selector="([^"]*)"[^>]*>/g;
-const FILE_RE = /<attached-file\s+name="([^"]*)"\s+type="([^"]*)">/g;
+const FILE_RE = /<attached-file\s+name="([^"]*)"\s+type="([^"]*)"(?: content-length="(\d+)")?>/g;
 // Body is XML-escaped JSON. Recorded `<`/`>`/`&` chars are encoded as
 // entities so they can't fake a `</recording>` or `</attachments>` close
 // tag, keeping the non-greedy boundary unambiguous.
@@ -196,11 +218,27 @@ export function extractUserAttachments(msg: Message): ParsedUserAttachments {
   for (const m of attachBlock.matchAll(ELEMENT_RE)) {
     result.elements.push({ selector: unescapeXml(m[1]) });
   }
-  for (const m of attachBlock.matchAll(FILE_RE)) {
-    result.files.push({
-      name: unescapeXml(m[1]),
-      type: unescapeXml(m[2]),
-    });
+  // Read length-tagged bodies by position so literal closing tags in a file
+  // retain their original meaning when the attachment is copied back.
+  const fileStart = raw.indexOf('<attachments>');
+  const fileEnd = matchUserRequest(raw)?.start ?? raw.length;
+  if (fileStart >= 0 && fileStart < fileEnd) {
+    const end = raw.lastIndexOf('</attachments>', fileEnd);
+    const files = raw.slice(fileStart, end);
+    const pattern = new RegExp(FILE_RE);
+    for (let match = pattern.exec(files); match; match = pattern.exec(files)) {
+      const start = pattern.lastIndex;
+      const length = match[3] === undefined ? undefined : Number(match[3]);
+      const close = length === undefined ? files.indexOf('</attached-file>', start) : start + 1 + length;
+      const valid = close >= start && files.startsWith(length === undefined ? '</attached-file>' : '\n</attached-file>', close);
+      const body = valid ? files.slice(start, close) : undefined;
+      result.files.push({
+        name: unescapeXml(match[1]),
+        type: unescapeXml(match[2]),
+        content: length === undefined ? body?.replace(/^\n|\n$/g, '') : body?.slice(1),
+      });
+      if (valid) pattern.lastIndex = close + '</attached-file>'.length;
+    }
   }
   for (const m of attachBlock.matchAll(RECORDING_RE)) {
     const attrs = new Map([...m[1].matchAll(ATTRIBUTE_RE)].map(([, key, value]) => [key, unescapeXml(value)]));
@@ -269,7 +307,7 @@ export function replaceUserText<M extends Message>(msg: M, newText: string): M {
     const match = matchUserRequest(raw);
     if (!match) return newText;
     return (
-      raw.slice(0, match.start) +
+      stripComposerDisplay(raw.slice(0, match.start)) +
       wrapUserRequest(newText) +
       raw.slice(match.end)
     );

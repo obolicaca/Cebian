@@ -208,8 +208,8 @@ function App({ standaloneTab }: { standaloneTab?: Pick<chrome.tabs.Tab, 'id' | '
         )}
 
         <Routes>
-          <Route path="/chat/new" element={<ChatPage onOpenSettings={() => navigate('/settings')} onTitleChange={setChatTitle} />} />
-          <Route path="/chat/:sessionId" element={<ChatPage onOpenSettings={() => navigate('/settings')} onTitleChange={setChatTitle} />} />
+          <Route path="/chat/new" element={<ChatPage onOpenSettings={(section) => navigate(section ? `/settings/${section}` : '/settings')} onTitleChange={setChatTitle} />} />
+          <Route path="/chat/:sessionId" element={<ChatPage onOpenSettings={(section) => navigate(section ? `/settings/${section}` : '/settings')} onTitleChange={setChatTitle} />} />
           <Route
             path="/settings/*"
             element={

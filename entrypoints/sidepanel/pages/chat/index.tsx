@@ -1,3 +1,4 @@
+import type { ComposerDisplay } from '@/lib/agent/composer-display';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -60,7 +61,7 @@ function isCancelledToolResult(tr: ToolResultMessage): boolean {
 
 // ─── ChatPage ───
 
-export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: () => void; onTitleChange?: (title: string) => void }) {
+export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (section?: string) => void; onTitleChange?: (title: string) => void }) {
   const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>();
   const isNewChat = !routeSessionId || routeSessionId === 'new';
   const navigate = useNavigate();
@@ -232,9 +233,10 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
       text: string,
       attachments: Attachment[] | undefined,
       expectedSessionId: string | null,
-      slashPrompt: SlashPrompt | undefined,
+      slashPrompts: SlashPrompt[] | undefined,
       delivery: FollowUpDelivery | undefined,
       selectedSkills: SelectedSkill[] | undefined,
+      composerDisplay?: ComposerDisplay,
     ) => {
       // 切换到已有会话但其会话行尚未加载完（sessionLoading）时拒绝派发：此刻
       // turnModel 还是上一个会话的本地草稿，若此时发送会把旧模型携带给新会话、
@@ -245,7 +247,7 @@ export function ChatPage({ onOpenSettings, onTitleChange }: { onOpenSettings?: (
       const result = await send(text, attachments, expectedSessionId, {
         model: turnModel ?? undefined,
         thinkingLevel: turnThinking,
-      }, slashPrompt, delivery, selectedSkills);
+      }, slashPrompts, delivery, selectedSkills, composerDisplay);
       // 排队 / 插话的消息此刻还不在对话里，不必拉到底
       if (result.status === 'dispatched' && !delivery) {
         scrollToBottom({ force: true });

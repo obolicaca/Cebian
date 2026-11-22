@@ -19,8 +19,10 @@ interface QueuedMessagesProps {
 /** 一条排队消息的单行预览：没打字只挂了斜杠提示词时显示 `/名字`。 */
 function previewText(item: QueuedPromptView): string {
   const text = oneLine(describeTabReferences(item.text));
-  if (!item.slashPromptName) return text;
-  return text ? `/${item.slashPromptName} ${text}` : `/${item.slashPromptName}`;
+  const names = item.slashPromptNames ?? [];
+  if (names.length === 0) return text;
+  const prefix = names.map((n) => `/${n}`).join(' ');
+  return text ? `${prefix} ${text}` : prefix;
 }
 
 /**

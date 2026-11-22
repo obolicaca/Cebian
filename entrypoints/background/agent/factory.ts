@@ -35,7 +35,7 @@ import {
   renderSummaryForLlm,
   type CompactionSummaryMessage,
 } from '@/lib/agent/compaction-summary';
-import { sanitizeAgentMessages } from '@/lib/agent/message-helpers';
+import { sanitizeAgentMessages, stripComposerDisplayFromMessage } from '@/lib/agent/message-helpers';
 import { supportsToolCalling } from '@/lib/providers/custom-models';
 import { toPlainChat } from './plain-chat';
 import { NO_TOOLS_NOTE } from './system-prompt';
@@ -208,7 +208,7 @@ function createCebianAgent(options: CreateAgentOptions): Agent {
           continue;
         }
         if (['system', 'user', 'assistant', 'toolResult'].includes((m as Message).role)) {
-          out.push(m as Message);
+          out.push(stripComposerDisplayFromMessage(m as Message));
         }
       }
       return plainChat ? toPlainChat(out) : out;

@@ -635,6 +635,7 @@ chat:
     needModel: "請先選擇一個 AI 模型"
     goToSettings: "前往設定"
     readPromptFailed: "讀取 Prompt 失敗"
+    noPrompts: "暫無 Prompt，前往 AI 配置建立"
     elementAdded: "此元素已新增"
     elementPickFailed: "元素選擇失敗"
     elementPickUnsupported: "當前頁面不支援元素選取"
@@ -662,6 +663,7 @@ chat:
     # $1 = Skill 名
     selectTabs: "選擇分頁"
     tabListTitle: "分頁"
+    searchPromptsAndSkills: "搜尋 Prompt 和 Skill"
     searchTabs: "搜尋分頁"
     noTabs: "沒有符合的分頁"
     tabUnavailable: "無法使用"
@@ -670,6 +672,7 @@ chat:
     tabReadFailed: "讀取頁面失敗"
     tabReferenced: "已引用"
     removeSkillReference: "移除 Skill：$1"
+    removePromptReference: "移除 Prompt：$1"
     removeTabReference: "移除網頁引用：$1"
     tabPreviewUnavailable: "暫無頁面簡介"
     tabBudget: "上下文不足，請減少引用分頁"
@@ -693,7 +696,6 @@ chat:
       attachmentCount:
         1: "1 個附件"
         n: "$1 個附件"
-      slashConflict: "請先移除輸入框裡的提示詞——排隊的訊息自帶一個"
     iframeEnterHint: "⏎ 點擊進入"
     # 語音輸入（本地優先、雲端兜底的語音辨識）
     voiceStart: "語音輸入"

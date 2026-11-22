@@ -114,11 +114,11 @@ describe('PromptQueue', () => {
     queue.enqueue(
       prompt('a', {
         attachments: [{ type: 'image', name: 'x.png', data: 'AAAA', mimeType: 'image/png' } as never],
-        slashPrompt: { name: 'review', body: 'long body' },
+        slashPrompts: [{ name: 'review', body: 'long body' }],
       }),
     );
     expect(queue.view()).toEqual([
-      { id: 'a', text: 'text-a', slashPromptName: 'review', attachmentCount: 1, status: 'queued' },
+      { id: 'a', text: 'text-a', slashPromptNames: ['review'], attachmentCount: 1, status: 'queued' },
     ]);
   });
 });

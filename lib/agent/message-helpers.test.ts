@@ -3,9 +3,12 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { assertJsonSerializable } from '@/lib/shims/pi-harness/session/session';
 import type { Message } from '@earendil-works/pi-ai';
 import { buildTextPrefix, type RecordingAttachment } from './attachments';
+import { wrapComposerDisplay, type ComposerDisplay } from './composer-display';
 import { wrapUserRequest } from './prompt-envelope';
 import {
-  extractSlashPrompt,
+  extractComposerDisplay,
+  stripComposerDisplayFromMessage,
+  extractSlashPrompts,
   extractUserAttachments,
   extractUserText,
   replaceUserText,
@@ -325,19 +328,24 @@ describe('extractUserText / replaceUserText 与 <slash-prompt> 块共存', () =>
   });
 });
 
-describe('extractSlashPrompt', () => {
+describe('extractSlashPrompts', () => {
   it('取出名字与正文；名字还原 XML 转义', () => {
     const raw = `<slash-prompt name="a&amp;b">\nline1\nline2\n</slash-prompt>\n\n<user-request>\nx\n</user-request>`;
-    expect(extractSlashPrompt(userMsg(raw))).toEqual({ name: 'a&b', body: 'line1\nline2' });
+    expect(extractSlashPrompts(userMsg(raw))).toEqual([{ name: 'a&b', body: 'line1\nline2' }]);
   });
 
-  it('没有块 → null', () => {
-    expect(extractSlashPrompt(userMsg(envelope(null, 'x')))).toBeNull();
+  it('多条块按出现顺序取出', () => {
+    const raw = `<slash-prompt name="a">\n1\n</slash-prompt>\n\n<slash-prompt name="b">\n2\n</slash-prompt>\n\n<user-request>\nx\n</user-request>`;
+    expect(extractSlashPrompts(userMsg(raw))).toEqual([{ name: 'a', body: '1' }, { name: 'b', body: '2' }]);
   });
 
-  it('非 user 消息 → null', () => {
+  it('没有块 → []', () => {
+    expect(extractSlashPrompts(userMsg(envelope(null, 'x')))).toEqual([]);
+  });
+
+  it('非 user 消息 → []', () => {
     const assistant = { role: 'assistant', content: '<slash-prompt name="x">y</slash-prompt>', timestamp: 1 };
-    expect(extractSlashPrompt(assistant as unknown as HelperMessage)).toBeNull();
+    expect(extractSlashPrompts(assistant as unknown as HelperMessage)).toEqual([]);
   });
 });
 
@@ -458,4 +466,43 @@ describe('extractUserAttachments · <recording> 信封', () => {
     const recordings = extractUserAttachments(userMessage(text)).recordings;
     expect(recordings.map((r) => [r.name, r.networkCount])).toEqual([['one.json', undefined], ['two.json', 3]]);
   });
+});
+
+
+describe('composer display snapshot', () => {
+  it('preserves inline order and repeated references while keeping the model request clean', () => {
+    const display: ComposerDisplay = {
+      text: '/a /b 你好 /a',
+      references: [
+        { kind: 'skill', name: 'a', from: 0, to: 2 },
+        { kind: 'prompt', name: 'b', from: 3, to: 5 },
+        { kind: 'skill', name: 'a', from: 9, to: 11 },
+      ],
+    };
+    const request = wrapUserRequest('你好');
+    const msg: Message = {
+      role: 'user',
+      timestamp: 1,
+      content: [{ type: 'text', text: wrapComposerDisplay(display) + request }],
+    };
+    expect(extractComposerDisplay(msg)).toEqual(display);
+    expect(extractUserText(msg)).toBe('你好');
+    expect(stripComposerDisplayFromMessage(msg).content).toEqual([{ type: 'text', text: request }]);
+    const edited = replaceUserText(msg, '改写');
+    expect(extractComposerDisplay(edited)).toBeUndefined();
+    expect(extractUserText(edited)).toBe('改写');
+  });
+});
+
+
+it('recovers inline file data verbatim for clipboard reuse', () => {
+  const file = { type: 'file' as const, name: 'notes.txt', mimeType: 'text/plain', content: 'one\n</attached-file>\n</attachments>\ntwo\n', size: 47 };
+  const msg: Message = {
+    role: 'user',
+    timestamp: 1,
+    content: [{ type: 'text', text: buildTextPrefix([file]) + '\n' + wrapUserRequest('Read this') }],
+  };
+  expect(extractUserAttachments(msg).files).toEqual([
+    { name: file.name, type: file.mimeType, content: file.content },
+  ]);
 });

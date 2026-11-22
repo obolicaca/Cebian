@@ -188,7 +188,7 @@ const chatClientHandlers: ClientHandlerMap = {
     prepare().then((text) => sessionManager.prompt(sessionId, text, msg.attachments, {
       model: msg.model,
       thinkingLevel: msg.thinkingLevel,
-    }, msg.slashPrompt, msg.delivery, msg.selectedSkills, accept)).then((accepted) => {
+    }, msg.slashPrompts, msg.delivery, msg.selectedSkills, accept, msg.composerDisplay)).then((accepted) => {
       if (!accepted && msg.requestId && !acknowledged) post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, error: 'Message was not accepted' });
     }).catch((err) => {
       if (msg.requestId && err instanceof TabReferenceError) {

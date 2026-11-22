@@ -105,7 +105,7 @@ class PromptQueue {
     return this.entries.map(({ prompt, steering }) => ({
       id: prompt.id,
       text: prompt.text,
-      ...(prompt.slashPrompt ? { slashPromptName: prompt.slashPrompt.name } : {}),
+      ...(prompt.slashPrompts?.length ? { slashPromptNames: prompt.slashPrompts.map((p) => p.name) } : {}),
       attachmentCount: prompt.attachments.length,
       status: steering ? 'steering' : 'queued',
     }));

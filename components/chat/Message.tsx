@@ -1,4 +1,6 @@
-import { Bot, ChevronLeft, ChevronRight, Lightbulb, CheckCircle, Crosshair, FileText, Film, FoldVertical, Network, Pencil, Scissors, ShieldAlert } from 'lucide-react';
+import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, type InlineAttachment } from '@/lib/agent/attachment-tokens';
+import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachFilePreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
+import { Bot, Globe, ChevronLeft, ChevronRight, Lightbulb, CheckCircle, Crosshair, FileText, Film, FoldVertical, Network, Pencil, Scissors, ShieldAlert } from 'lucide-react';
 import { memo, useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,29 +8,66 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { CopyButton } from '@/components/common/CopyButton';
 import { MarkdownRenderer } from '@/components/common/MarkdownRenderer';
 import { MessageMetaRow, type MessageMetaProps } from '@/components/chat/MessageMetaRow';
-import { extractUserText, extractUserAttachments, extractSlashPrompt, extractSelectedSkillNames } from '@/lib/agent/message-helpers';
+import { extractUserText, extractUserAttachments, extractSlashPrompts, extractSelectedSkillNames, extractComposerDisplay } from '@/lib/agent/message-helpers';
 import { compactTabText, describeTabReferences, findTabReferences, tabLink, type TabReference } from '@/lib/agent/tab-references';
-import { attachTabPreview, TAB_PILL_LAYOUT } from './tab-preview';
-import { displayQuotedText } from '@/lib/agent/quote-tokens';
-import { showDialog } from '@/lib/ui/dialog';
+import { attachPillPreview, attachTabPreview, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT } from './tab-preview';
+import { displayQuotedText, findQuoteTokens } from '@/lib/agent/quote-tokens';
 import { RECORDING_MIME } from '@/lib/agent/attachments';
 import { t } from '@/lib/i18n';
 import { describePermission } from '@/lib/agent/tool-permissions';
 import { downloadFile } from '@/lib/utils';
 import { recordingMetaText, recordingTitle } from '@/components/chat/recording-meta';
+import { PromptPill } from '@/components/chat/PromptPill';
 import { SkillPill } from '@/components/chat/SkillPill';
 import { RECORDING_HAR_DIR } from '@/lib/recorder/constants';
 import { browser } from 'wxt/browser';
 import type { Message } from '@earendil-works/pi-ai';
 
 
+function HistoryAttachmentPill({ attachment }: { attachment: InlineAttachment }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (ref.current && attachment.type === 'file') return attachFilePreview(ref.current, attachment);
+  }, [attachment]);
+  const name = attachmentName(attachment);
+  return (
+    <span ref={ref} data-attachment-pill={attachment.type} title={name} className={attachmentPillClass(attachment.type)}>
+      {attachment.type === 'image' ? (
+        <button type="button" className="contents" onClick={() => previewImageAttachment(attachment)}>
+          <img src={imageAttachmentSrc(attachment)} className="size-3.5 shrink-0 rounded-sm object-cover" alt="" />
+          <span className={ATTACHMENT_LABEL_CLASS}>{name}</span>
+        </button>
+      ) : (
+        <>
+          <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className={ATTACHMENT_LABEL_CLASS}>{name}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+function HistoryQuotePill({ quote }: { quote: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (ref.current) return attachPillPreview(ref.current, quote, undefined, undefined, true);
+  }, [quote]);
+  return (
+    <span ref={ref} data-quote-pill="true" className={`${QUOTE_PILL_STYLE} ${TAB_PILL_LAYOUT}`}>
+      <span className="grid size-3.5 shrink-0 place-items-center" aria-hidden="true">❝</span>
+      <span className="min-w-0 truncate">{compactTabText(quote, 28)}</span>
+    </span>
+  );
+}
+
 const HistoryTabPill = memo(function HistoryTabPill({ reference }: { reference: TabReference }) {
   return (
     <a href={tabLink(reference.url)} target="_blank" rel="noopener noreferrer"
-      className={TAB_PILL_LAYOUT + ' rounded-md bg-primary/10 px-1.5 text-primary'}
+      className={TAB_PILL_LAYOUT + ' bg-primary/10 text-primary'}
       aria-label={reference.title} data-tab-reference="true"
       ref={(anchor) => anchor ? attachTabPreview(anchor, reference) : undefined}>
-      @{compactTabText(reference.title, 28)}
+      <Globe className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{compactTabText(reference.title, 28)}</span>
     </a>
   );
 }, ({ reference: a }, { reference: b }) =>
@@ -116,10 +155,11 @@ export function UserMessageBubble({
   branch?: BranchSwitcherProps;
 }) {
   const text = msg ? extractUserText(msg) : null;
-  const slashPrompt = useMemo(() => msg ? extractSlashPrompt(msg) : null, [msg]);
+  const slashPrompts = useMemo(() => msg ? extractSlashPrompts(msg) : [], [msg]);
   const selectedSkillNames = useMemo(() => msg ? extractSelectedSkillNames(msg) : [], [msg]);
+  const composerDisplay = useMemo(() => msg ? extractComposerDisplay(msg) : undefined, [msg]);
   const attachments = useMemo(() => msg ? extractUserAttachments(msg) : null, [msg]);
-  const hasAttachments = attachments && (attachments.images.length > 0 || attachments.elements.length > 0 || attachments.files.length > 0 || attachments.recordings.length > 0);
+  const hasAttachments = attachments && (attachments.elements.length > 0 || attachments.recordings.length > 0);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -181,30 +221,76 @@ export function UserMessageBubble({
     );
   }
 
-  // 携带的提示词就写成气泡里的第一段普通文字 `/名字`，与用户自己敲的话同一个样式——
-  // 它本来就是这一轮消息的一部分，不值得为它单开一块 UI。正文（模板展开后的那一大段）
-  // 不在气泡里露出：气泡只显示用户看得懂、也确实「打过」的那几个字。
-  const slashText = slashPrompt ? `/${slashPrompt.name}` : null;
-  const bubbleText = [slashText, text].filter(Boolean).join(' ');
-  let tabCursor = 0;
-  const bubbleParts = findTabReferences(bubbleText).flatMap(({ ref, from, to }) => {
-    const preceding = bubbleText.slice(tabCursor, from);
-    tabCursor = to;
-    return [displayQuotedText(preceding), <HistoryTabPill key={ref.id} reference={ref} />];
+  const images = attachments?.images ?? [];
+  const files = attachments?.files ?? [];
+  const displayAttachments = new Map<string, InlineAttachment>();
+  let imageIndex = 0;
+  let fileIndex = 0;
+  for (const ref of composerDisplay?.attachments ?? []) {
+    if (ref.type === 'image') {
+      const image = images[imageIndex++];
+      if (image) displayAttachments.set(ref.id, { ...image, type: 'image', source: 'upload', name: ref.name });
+    } else if (ref.type === 'file') {
+      const file = files[fileIndex++];
+      if (file) displayAttachments.set(ref.id, { type: 'file', name: file.name, mimeType: file.type, content: file.content ?? '', size: 0 });
+    }
+  }
+  // Older messages have attachment data without inline positions.
+  const trailingTokens: string[] = [];
+  const unpositioned: InlineAttachment[] = [
+    ...images.slice(imageIndex).map((image): InlineAttachment =>
+      ({ ...image, type: 'image', source: 'upload', name: t('chat.attachments.image') })),
+    ...files.slice(fileIndex).map((file): InlineAttachment =>
+      ({ type: 'file', name: file.name, mimeType: file.type, content: file.content ?? '', size: 0 })),
+  ];
+  unpositioned.forEach((attachment, index) => {
+    const id = `00000000-0000-0000-0000-${index.toString(16).padStart(12, '0')}`;
+    displayAttachments.set(id, attachment);
+    trailingTokens.push(attachmentToken(id));
   });
-  bubbleParts.push(displayQuotedText(bubbleText.slice(tabCursor)));
-  // Skill 引用以 pill 形式嵌在气泡文字流里（与输入框一致）；复制时还原成 `/名字` 文本。
-  const copyText = [...selectedSkillNames.map((name) => `/${name}`), displayQuotedText(describeTabReferences(bubbleText))].filter(Boolean).join(' ');
-  // 一个字没打、也没挂提示词 / Skill 的空消息不渲染气泡框，免得留一个空壳。
-  const hasBubble = bubbleText.length > 0 || selectedSkillNames.length > 0 || children != null;
+  const bubbleText = [composerDisplay?.text ?? text ?? '', ...trailingTokens].filter(Boolean).join(' ');
+  const inlineParts = [
+    ...findAttachmentTokens(bubbleText).map(({ id, from, to }) => {
+      const attachment = displayAttachments.get(id);
+      return { from, to, node: attachment ? <HistoryAttachmentPill key={from} attachment={attachment} /> : null };
+    }),
+    ...findQuoteTokens(bubbleText).map(({ quote, from, to }) => ({
+      from, to, node: <HistoryQuotePill key={from} quote={quote} />,
+    })),
+    ...findTabReferences(bubbleText).map(({ ref, from, to }) => ({
+      from, to, node: <HistoryTabPill key={from} reference={ref} />,
+    })),
+    ...(composerDisplay?.references ?? []).map(({ kind, name, from, to }) => ({
+      from, to,
+      node: kind === 'skill' ? <SkillPill key={from} name={name} /> : <PromptPill key={from} name={name} />,
+    })),
+  ].sort((a, b) => a.from - b.from);
+  let cursor = 0;
+  const bubbleParts = inlineParts.flatMap(({ from, to, node }) => {
+    if (from < cursor) return [];
+    const preceding = bubbleText.slice(cursor, from);
+    cursor = to;
+    return [preceding, node];
+  });
+  bubbleParts.push(bubbleText.slice(cursor));
+  // Older messages contain the selected names but do not record their positions.
+  const legacyNames = composerDisplay ? [] : [
+    ...selectedSkillNames.map((name) => ({ kind: 'skill', name })),
+    ...slashPrompts.map(({ name }) => ({ kind: 'prompt', name })),
+  ];
+  const clipboardText = [...legacyNames.map(({ name }) => `/${name}`), bubbleText].filter(Boolean).join(' ');
+  const copyText = displayQuotedText(describeAttachmentTokens(describeTabReferences(clipboardText), new Map(
+    [...displayAttachments].map(([id, att]) => [id, attachmentName(att)]),
+  )));
+  const hasBubble = bubbleText.length > 0 || legacyNames.length > 0 || children != null;
 
   return (
     <div className="self-end max-w-[95%] group/user">
       {hasBubble && (
-        <div className="bg-card border border-border px-4 py-3 rounded-2xl chat-text-body chat-font leading-relaxed w-fit ml-auto whitespace-pre-wrap break-all">
-          {selectedSkillNames.map((name) => (
-            <span key={name} className="mr-1.5 inline-flex">
-              <SkillPill name={name} />
+        <div className="bg-card border border-border px-4 py-3 rounded-2xl chat-text-input chat-font leading-relaxed w-fit ml-auto whitespace-pre-wrap break-all">
+          {legacyNames.map(({ kind, name }) => (
+            <span key={`${kind}:${name}`} className="mr-1.5">
+              {kind === 'skill' ? <SkillPill name={name} /> : <PromptPill name={name} />}
             </span>
           ))}
           {bubbleText.length > 0 ? bubbleParts : children}
@@ -213,23 +299,6 @@ export function UserMessageBubble({
 
       {hasAttachments && (
         <div className="flex gap-1.5 flex-wrap items-center justify-end mt-1.5 px-1">
-          {attachments.images.map((img, i) => (
-            <Badge
-              key={`img-${i}`}
-              variant="outline"
-              className="shrink-0 text-[0.65rem] font-mono gap-1 h-5 rounded pl-0.5 pr-1 text-purple-400 border-purple-400/20 bg-purple-400/5"
-            >
-              <img
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt={t('chat.attachments.imageAlt')}
-                className="h-3.5 w-auto rounded-sm object-cover cursor-pointer"
-                onClick={() => showDialog('image-preview', {
-                  src: `data:${img.mimeType};base64,${img.data}`,
-                })}
-              />
-              {t('chat.attachments.image')}
-            </Badge>
-          ))}
           {attachments.elements.map((el, i) => (
             <Badge
               key={`el-${i}`}
@@ -238,16 +307,6 @@ export function UserMessageBubble({
             >
               <Crosshair className="size-2.5 shrink-0" />
               <span className="truncate max-w-24">{el.selector}</span>
-            </Badge>
-          ))}
-          {attachments.files.map((f, i) => (
-            <Badge
-              key={`file-${i}`}
-              variant="outline"
-              className="shrink-0 text-[0.65rem] font-mono gap-1 h-5 rounded pl-1 pr-1 text-emerald-400 border-emerald-400/20 bg-emerald-400/5"
-            >
-              <FileText className="size-2.5 shrink-0" />
-              <span className="truncate max-w-24">{f.name}</span>
             </Badge>
           ))}
           {attachments.recordings.map((r, i) => {
@@ -296,7 +355,11 @@ export function UserMessageBubble({
               * `hasBubble` 为真时它必然非空，空消息也就不会给出一个「复制了空字符串」
               * 的假成功。
               */}
-            {hasBubble && <CopyButton text={copyText} />}
+            {hasBubble && <CopyButton text={copyText} references={{
+              promptNames: slashPrompts.map(({ name }) => name),
+              quotedText: copyText !== clipboardText ? clipboardText : undefined,
+              attachments: displayAttachments.size ? Object.fromEntries(displayAttachments) : undefined,
+            }} />}
             {onEdit && (
               <Tooltip>
                 <TooltipTrigger asChild>

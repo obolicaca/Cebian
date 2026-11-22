@@ -635,6 +635,7 @@ chat:
     needModel: "请先选择一个 AI 模型"
     goToSettings: "前往设置"
     readPromptFailed: "读取 Prompt 失败"
+    noPrompts: "暂无 Prompt，前往 AI 配置创建"
     elementAdded: "该元素已添加"
     elementPickFailed: "元素选择失败"
     elementPickUnsupported: "当前页面不支持元素选取"
@@ -662,6 +663,7 @@ chat:
     # $1 = Skill 名
     selectTabs: "选择标签页"
     tabListTitle: "标签页"
+    searchPromptsAndSkills: "搜索 Prompt 和 Skill"
     searchTabs: "搜索标签页"
     noTabs: "没有匹配的标签页"
     tabUnavailable: "不可用"
@@ -670,6 +672,7 @@ chat:
     tabReadFailed: "读取页面失败"
     tabReferenced: "已引用"
     removeSkillReference: "移除 Skill：$1"
+    removePromptReference: "移除 Prompt：$1"
     removeTabReference: "移除网页引用：$1"
     tabPreviewUnavailable: "暂无页面简介"
     tabBudget: "上下文不足，请减少引用页面"
@@ -693,7 +696,6 @@ chat:
       attachmentCount:
         1: "1 个附件"
         n: "$1 个附件"
-      slashConflict: "请先移除输入框里的提示词——排队的消息自带一个"
     iframeEnterHint: "⏎ 点击进入"
     # 语音输入（本地优先、云端兜底的语音识别）
     voiceStart: "语音输入"

@@ -2,7 +2,7 @@ import { Box } from 'lucide-react';
 
 /** Shared visual for inline Skill references (composer widget + message bubble). */
 export const SKILL_PILL_CLASS =
-  'inline-flex items-center gap-1 rounded-md bg-info/10 px-1.5 align-baseline font-medium text-info';
+  'chat-inline-pill bg-info/10 font-medium text-info';
 
 /** Lucide `box` icon markup for non-React contexts (CodeMirror widget DOM). */
 export const SKILL_PILL_ICON_SVG =
@@ -12,7 +12,7 @@ export function SkillPill({ name, title }: { name: string; title?: string }) {
   return (
     <span className={SKILL_PILL_CLASS} title={title}>
       <Box className="size-3.5 shrink-0" aria-hidden="true" />
-      {name}
+      <span className="min-w-0 truncate">{name}</span>
     </span>
   );
 }

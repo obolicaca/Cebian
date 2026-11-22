@@ -13,16 +13,44 @@
  * API keys.
  */
 
+import type { InlineAttachment } from '@/lib/agent/attachment-tokens';
 import { toast } from 'sonner';
 import { t } from '@/lib/i18n';
 
+const CHAT_REFERENCES_FORMAT = 'web application/x-cebian-chat-references';
+
+export interface CopiedChatReferences {
+  promptNames?: readonly string[];
+  quotedText?: string;
+  attachments?: Record<string, InlineAttachment>;
+}
+
+export async function readCopiedChatReferences(text: string): Promise<CopiedChatReferences> {
+  try {
+    const items = await navigator.clipboard.read();
+    const item = items.find(({ types }) => types.includes(CHAT_REFERENCES_FORMAT) && types.includes('text/plain'));
+    const normalize = (value: string) => value.replace(/\r\n/g, '\n');
+    if (!item || normalize(await (await item.getType('text/plain')).text()) !== normalize(text)) return {};
+    const data = JSON.parse(await (await item.getType(CHAT_REFERENCES_FORMAT)).text());
+    return {
+      promptNames: Array.isArray(data?.promptNames)
+        ? data.promptNames.filter((name: unknown) => typeof name === 'string') : undefined,
+      attachments: data?.attachments && typeof data.attachments === 'object' ? data.attachments : undefined,
+      quotedText: typeof data?.quotedText === 'string' ? normalize(data.quotedText) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 interface CopyOptions {
+  references?: CopiedChatReferences;
   /** Suppress success/failure toasts; caller handles its own feedback. */
   silent?: boolean;
 }
 
 export async function copyText(text: string, opts: CopyOptions = {}): Promise<boolean> {
-  const ok = await tryCopy(text);
+  const ok = await tryCopy(text, opts.references);
   if (!opts.silent) {
     if (ok) toast.success(t('common.copied'));
     else toast.error(t('common.copyFailed'));
@@ -57,7 +85,18 @@ export async function readText(): Promise<string> {
   }
 }
 
-async function tryCopy(text: string): Promise<boolean> {
+async function tryCopy(text: string, references?: CopiedChatReferences): Promise<boolean> {
+  if (references?.promptNames?.length || references?.quotedText) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+        [CHAT_REFERENCES_FORMAT]: new Blob([JSON.stringify(references)], { type: 'application/x-cebian-chat-references' }),
+      })]);
+      return true;
+    } catch {
+      // Clipboard implementations without web custom formats still receive plain text.
+    }
+  }
   // Modern API — works in secure contexts when the document is focused.
   try {
     if (navigator.clipboard?.writeText) {

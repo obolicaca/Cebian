@@ -93,10 +93,7 @@ describe('composeUserMessage', () => {
 
   // 块必须在请求块之前：信封的不变式是「<user-request> 永远置末」。
   it('带斜杠提示词 → 块排在 <user-request> 之前，用户文本仍独占请求块', async () => {
-    const msg = await composeUserMessage('顺便翻成英文', [], false, {
-      name: 'summarize',
-      body: '总结这个页面。',
-    });
+    const msg = await composeUserMessage('顺便翻成英文', [], false, [{ name: 'summarize', body: '总结这个页面。' }]);
     expect(msg).toContain('<slash-prompt name="summarize">\n总结这个页面。\n</slash-prompt>');
     expect(msg).toContain('<user-request>\n顺便翻成英文\n</user-request>');
     expect(msg.indexOf('<slash-prompt')).toBeLessThan(msg.indexOf('<user-request>'));
@@ -106,9 +103,18 @@ describe('composeUserMessage', () => {
     expect(msg.endsWith('</user-request>')).toBe(true);
   });
 
+  it('多条提示词 → 各成一块、按传入顺序排在请求块之前', async () => {
+    const msg = await composeUserMessage('任务', [], false, [{ name: 'a', body: 'Do A.' }, { name: 'b', body: 'Do B.' }]);
+    expect(msg).toContain('<slash-prompt name="a">\nDo A.\n</slash-prompt>');
+    expect(msg).toContain('<slash-prompt name="b">\nDo B.\n</slash-prompt>');
+    expect(msg.indexOf('name="a"')).toBeLessThan(msg.indexOf('name="b"'));
+    expect(msg.indexOf('name="b"')).toBeLessThan(msg.indexOf('<user-request>'));
+    expect(msg.endsWith('</user-request>')).toBe(true);
+  });
+
   // 只挂提示词、一个字没打：请求块留空会让模型以为这轮没有请求。
   it('只挂提示词、用户没打字 → 请求块放一句指向提示词块的话', async () => {
-    const msg = await composeUserMessage('   ', [], false, { name: 'x', body: 'do it' });
+    const msg = await composeUserMessage('   ', [], false, [{ name: 'x', body: 'do it' }]);
     expect(msg).toContain('<user-request>\nFollow the instructions in the slash-prompt block above.\n</user-request>');
     // 占位句不能自带尖括号：它在 <user-request> 里，会变成没闭合的嵌套元素。
     expect(msg).not.toContain('<slash-prompt> block');
@@ -124,7 +130,7 @@ describe('composeUserMessage', () => {
     const second = { name: 'compose-b', filePath: '~/.cebian/skills/compose-b/SKILL.md' };
     await vfs.writeFile(first.filePath, '---\nname: compose-a\n---\nDo A.');
     await vfs.writeFile(second.filePath, '---\nname: compose-b\n---\nDo B.');
-    const msg = await composeUserMessage('共同任务', [], false, { name: 'note', body: 'Use this format.' }, [first, second]);
+    const msg = await composeUserMessage('共同任务', [], false, [{ name: 'note', body: 'Use this format.' }], [first, second]);
     expect(msg).toContain('<slash-prompt name="note">');
     expect(msg).toContain('<selected-skills>');
     expect(msg.indexOf('Do A.')).toBeLessThan(msg.indexOf('Do B.'));

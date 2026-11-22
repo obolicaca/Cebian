@@ -1,3 +1,4 @@
+import { stripComposerDisplayFromMessage } from '@/lib/agent/message-helpers';
 /**
  * 移植自 @earendil-works/pi-agent-core@0.84.4 `src/harness/messages.ts`（MIT，许可证见同目录 LICENSE）。
  * vendor 原因、维护约定与偏离记录见 lib/shims/pi-harness/README.md。
@@ -118,6 +119,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
             timestamp: m.timestamp,
           };
         case 'user':
+          return stripComposerDisplayFromMessage(m);
         case 'assistant':
         case 'toolResult':
           return m;

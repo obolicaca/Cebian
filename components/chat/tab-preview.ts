@@ -2,7 +2,9 @@ import { executeInTabWithArgs } from '@/lib/browser/tab-actions';
 import { compactTabText, type TabReference } from '@/lib/agent/tab-references';
 import { t } from '@/lib/i18n';
 
-export const TAB_PILL_LAYOUT = 'inline-block max-w-[min(18rem,100%)] truncate whitespace-nowrap align-bottom';
+export const QUOTE_PILL_STYLE = 'bg-info/10 text-info';
+
+export const TAB_PILL_LAYOUT = 'chat-inline-pill max-w-[min(18rem,100%)]';
 const PREVIEW_DESCRIPTION_LIMIT = 80;
 
 async function readDescription(reference: TabReference): Promise<string> {

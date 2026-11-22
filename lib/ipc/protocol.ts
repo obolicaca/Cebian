@@ -1,3 +1,4 @@
+import type { ComposerDisplay } from '@/lib/agent/composer-display';
 // Client ↔ background 的端口通信协议。
 // Client = 一个 UI 实例（侧边栏，或独立标签页里打开的同一套界面）。
 //
@@ -62,7 +63,8 @@ export interface QueuedPrompt {
   id: string;
   text: string;
   attachments: Attachment[];
-  slashPrompt?: SlashPrompt;
+  slashPrompts?: SlashPrompt[];
+  composerDisplay?: ComposerDisplay;
   selectedSkills?: SelectedSkill[];
   turn: TurnSettings;
 }
@@ -72,7 +74,7 @@ export interface QueuedPrompt {
 export interface QueuedPromptView {
   id: string;
   text: string;
-  slashPromptName?: string;
+  slashPromptNames?: string[];
   attachmentCount: number;
   status: 'queued' | 'steering';
 }
@@ -92,10 +94,11 @@ export type ClientMessage =
       sessionId: string | null;
       text: string;
       attachments?: Attachment[];
-      /** 本轮携带的斜杠提示词（`/` 菜单选中的模板，模板变量已在页面侧展开）。正文由
+      /** 本轮携带的斜杠提示词（可多条；`/` 菜单选中的模板，模板变量已在页面侧展开）。正文由
        *  UI 传而非后台按名字回读文件：模板变量要 chrome.tabs / scripting / 剪贴板，
        *  是侧边栏专有能力，后台引不得（见 lib/ai-config/template-vars-sidepanel.ts）。 */
-      slashPrompt?: SlashPrompt;
+      slashPrompts?: SlashPrompt[];
+      composerDisplay?: ComposerDisplay;
       selectedSkills?: SelectedSkill[];
       /** 任务运行中发送时的交付方式（issue #96）：排队或插话。只在页面认为会话正忙时
        *  携带；后台到达时会话已空闲则按普通发送处理。缺省 = 旧语义。 */

@@ -1,6 +1,8 @@
+import type { ComposerDisplay } from '@/lib/agent/composer-display';
 import { useState, useRef, useEffect, useMemo, useCallback, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react';
-import { AtSign, Box, Check, Globe, Send, Square, MousePointer2, Camera, Paperclip, Smartphone, Crosshair, FileText, X, FileType, Film, Network, ListPlus, CornerDownRight } from 'lucide-react';
-import { showDialog } from '@/lib/ui/dialog';
+import { AtSign, Box, Check, Globe, Send, Square, MousePointer2, Camera, Paperclip, Smartphone, Crosshair, FileText, X, Film, Network, ListPlus, CornerDownRight } from 'lucide-react';
+import { attachmentName } from './attachment-pill';
+import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, stripAttachmentTokens, validateCopiedAttachment, type InlineAttachment } from '@/lib/agent/attachment-tokens';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +23,7 @@ import { isUsableModel } from '@/lib/providers/usable-models';
 import { startElementPicker, cancelElementPicker } from '@/lib/browser/element-picker';
 import { scanPrompts, scanSkillIndex, type PromptMeta, type SkillMeta } from '@/lib/ai-config/scanner';
 import { resolveSelectedSkills, type SelectedSkill } from '@/lib/ai-config/selected-skills';
-import { findSkillTokens, findSlashToken, stripSkillTokens, tokensToSkills, type SlashToken } from '@/lib/ai-config/skill-tokens';
+import { findPromptTokens, findSkillTokens, findSlashToken, stripSkillTokens, tokensToSkills, type SlashToken } from '@/lib/ai-config/skill-tokens';
 import { quoteToken } from '@/lib/agent/quote-tokens';
 import { ComposerEditor, type ComposerEditorHandle } from '@/components/chat/ComposerEditor';
 import { replaceTemplateVars } from '@/lib/ai-config/template';
@@ -48,12 +50,13 @@ interface ChatInputProps {
     message: string,
     attachments: Attachment[] | undefined,
     expectedSessionId: string | null,
-    slashPrompt: SlashPrompt | undefined,
+    slashPrompts: SlashPrompt[] | undefined,
     /** 任务运行中发送时的交付方式（排队 / 插话）；空闲时为 undefined（普通发送）。 */
     delivery: FollowUpDelivery | undefined,
     selectedSkills: SelectedSkill[] | undefined,
+    composerDisplay?: ComposerDisplay,
   ) => Promise<PromptDispatchResult>;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: string) => void;
   isAgentRunning?: boolean;
   onCancel?: () => void;
   /** User-message texts already sent in this session, oldest first. */
@@ -92,6 +95,9 @@ export interface ChatInputHandle {
   /** 聊天页拖放区放下的文件；`folders` 是被排除的文件夹名，只用来提示。 */
   addFiles: (files: readonly File[], folders: readonly string[]) => void;
 }
+
+const MENU_SEARCH_CLASS =
+  'w-full rounded-md border border-border bg-transparent px-2 py-1 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/40';
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
   { onSend, onOpenSettings, isAgentRunning, onCancel, userHistory, sessionId, model: currentModel, thinkingLevel: currentThinkingLevel, onModelChange, onThinkingChange, contextUsage, agentBusy, onCompact, onDispatchingChange, queue = [], queuePaused = false, onRemoveQueued, onTakeQueued, onSendQueuedNow },
@@ -154,10 +160,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   // 光标正在编辑的 `/xxx` 词段（斜杠菜单触发器）；null = 不挂菜单。
   const [slashToken, setSlashToken] = useState<SlashToken | null>(null);
   const menuOpen = slashToken !== null;
-  // 本轮挂着的斜杠提示词。选中 `/x` 不把正文倒进输入框，而是在输入流最前挂一枚
-  // `/名字` 标记（ComposerEditor 的 0 位 widget），正文在发送时自成信封里的一段，
-  // 不掺进用户自己敲的话（issue #53）。标记是独立 widget、不是文本：天然不可分割。
-  const [slashPrompt, setSlashPrompt] = useState<SlashPrompt | null>(null);
+  const [slashSearch, setSlashSearch] = useState<string | null>(null);
+  // 本轮挂着的斜杠提示词。选中 `/x` 不把正文倒进输入框，而是在光标处插入一枚
+  // `/名字` 内联胶囊（ComposerEditor 的 replace 装饰），正文在发送时自成信封里的一段，
+  // 不掺进用户自己敲的话（issue #53）。胶囊是原子范围：整块删除，不可拆半。
+  const [slashPrompts, setSlashPrompts] = useState<SlashPrompt[]>([]);
   // 选中一条提示词要 await 读 VFS + 采集模板变量（页面脚本注入、剪贴板），期间用户可能
   // 已经切了会话、又点了另一条、把已挂的标记退格摘掉，或者干脆已经把消息发出去了。
   // 这四处都自增，选中落定前比对世代号，过期的结果直接丢弃。
@@ -168,6 +175,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const promptNames = useMemo(() => prompts.map((p) => p.name), [prompts]);
   const docTokens = useMemo(() => findSkillTokens(value, skills, promptNames), [value, skills, promptNames]);
   const docSkills = useMemo(() => tokensToSkills(docTokens), [docTokens]);
+  // Prompt 行对号与 Skill 同源：按文档里实际存在的引用派生，胶囊删掉对号即消失。
+  const docPromptTokens = useMemo(() => findPromptTokens(value, promptNames), [value, promptNames]);
+
+  // 已完成的 Prompt 胶囊与 Skill pill 一样抑制斜杠菜单：它是已提交的引用，不是开放查询。
+  const menuTokens = useCallback((text: string) => [
+    ...findSkillTokens(text, skills, promptNames),
+    ...findPromptTokens(text, slashPrompts.map((p) => p.name)),
+  ], [skills, promptNames, slashPrompts]);
+  // 胶囊被移除（叉号 / 退格 / 整体改写）后 token 从文档消失，挂着的正文同步作废。
+  useEffect(() => {
+    const alive = slashPrompts.filter((p) => findPromptTokens(value, [p.name]).length > 0);
+    if (alive.length !== slashPrompts.length) {
+      setSlashPrompts(alive);
+      slashPromptSeqRef.current++;
+    }
+  }, [value, slashPrompts]);
   const [selectedPromptIndex, setSelectedPromptIndex] = useState(0);
   const [isPicking, setIsPicking] = useState(false);
   // History navigation: null = editing the current draft; otherwise points
@@ -179,6 +202,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const editorRef = useRef<ComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const slashSearchRef = useRef<HTMLInputElement>(null);
+  const slashDismissed = useRef(false);
+  const dismissSlashMenu = useCallback(() => {
+    slashDismissed.current = true;
+    setSlashToken(null);
+    setSlashSearch(null);
+  }, []);
   const sessionIdRef = useRef<string | null>(sessionId ?? null);
   sessionIdRef.current = sessionId ?? null;
 
@@ -237,6 +267,19 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const {
     attachments, getAttachments, freeSlots, updateAttachments, ingestFiles, waitForIntake,
   } = useComposerAttachments({ supportsImage, isLocked: isComposerLocked });
+
+  const attachmentIds = useRef(new WeakMap<InlineAttachment, string>());
+  const inlineAttachments = useMemo(() => {
+    const inline = new Map<string, InlineAttachment>();
+    for (const att of attachments) {
+      if (att.type !== 'file' && att.type !== 'image') continue;
+      const id = attachmentIds.current.get(att) ?? crypto.randomUUID();
+      attachmentIds.current.set(att, id);
+      inline.set(id, att);
+    }
+    return inline;
+  }, [attachments]);
+  const previousAttachmentTokens = useRef(new Set<string>());
 
   const handleModelSelect = useCallback((provider: string, modelId: string) => {
     onModelChange({ provider, modelId });
@@ -394,10 +437,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }, [isPicking]);
 
   // 只挂了提示词、一个字没打也算可发——提示词本身就是这一轮的请求。
-  const canSend = value.trim().length > 0 || slashPrompt !== null;
+  const canSend = stripAttachmentTokens(value).trim().length > 0 || slashPrompts.length > 0 || attachments.length > 0;
   // 发送 / 停止共用一个按钮位（与 Claude / Codex 一致）：运行中输入框空着是停止键，打了字
   // 就变成按设置排队 / 插话的发送键，这时停止走 Esc。
-  const showStop = isAgentRunning && !canSend;
+  const canStop = isAgentRunning || agentBusy;
+  const showStop = canStop && (!canSend || !isAgentRunning);
 
   // Recorder integration. The captured session lands in attachments via
   // the channel subscription in useComposerAttachments — NOT via
@@ -413,7 +457,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     // 在这里拦住，用户输入的文案就还留在输入框里，不会因为后台 throw 而白打一遍。
     if (!currentModel || !modelUsable) {
       toast.error(currentModel ? t('errors.modelUnavailable') : t('chat.composer.needModel'), {
-        action: onOpenSettings ? { label: t('chat.composer.goToSettings'), onClick: onOpenSettings } : undefined,
+        action: onOpenSettings ? { label: t('chat.composer.goToSettings'), onClick: () => onOpenSettings() } : undefined,
       });
       return;
     }
@@ -431,8 +475,21 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     // 内联 Skill pill 与手敲的完整命令走同一条结构化路径：pill 从正文剥掉，
     // Skill 本体走信封里的 <selected-skills> 块。
     const tokens = findSkillTokens(outgoingText, skills, promptNames);
-    const text = stripSkillTokens(outgoingText, tokens).trim();
+    // Prompt 胶囊与 Skill 同走结构化路径：token 从正文剥掉，正文走信封 <slash-prompt>。
+    const promptTokens = findPromptTokens(outgoingText, slashPrompts.map((p) => p.name));
+    // 信封里的提示词块按文档出现顺序、同名去重（同名胶囊共享同一份展开正文）。
+    const promptsToSend: SlashPrompt[] = [];
+    for (const token of promptTokens) {
+      const picked = slashPrompts.find((p) => p.name === token.name);
+      if (picked && !promptsToSend.some((p) => p.name === picked.name)) promptsToSend.push(picked);
+    }
+    const text = stripAttachmentTokens(stripSkillTokens(outgoingText, [...tokens, ...promptTokens])).trim();
     const skillsToSend = tokensToSkills(tokens);
+    const references = [
+      ...tokens.map(({ name, from, to }) => ({ kind: 'skill' as const, name, from, to })),
+      ...promptTokens.map(({ name, from, to }) => ({ kind: 'prompt' as const, name, from, to })),
+    ];
+
     const dispatchSessionId = sessionIdRef.current;
 
     isDispatchingRef.current = true;
@@ -468,7 +525,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       if (sessionIdRef.current !== dispatchSessionId) return;
 
       const outgoing = getAttachments();
-      const result = await onSend(text, outgoing.length > 0 ? outgoing : undefined, dispatchSessionId, slashPrompt ?? undefined, delivery, skillsToSend.length ? skillsToSend : undefined);
+      const positioned = new Set(findAttachmentTokens(outgoingText).map(({ id }) => id));
+      const missingTokens: string[] = [];
+      const displayAttachments = outgoing.flatMap((att) => {
+        if (att.type !== 'file' && att.type !== 'image') return [];
+        const id = attachmentIds.current.get(att) ?? crypto.randomUUID();
+        if (!positioned.has(id)) missingTokens.push(attachmentToken(id));
+        return [{ id, name: attachmentName(att), type: att.type }];
+      });
+      const displayText = [outgoingText, ...missingTokens].filter(Boolean).join(missingTokens.length ? ' ' : '');
+      const composerDisplay = references.length || displayAttachments.length
+        ? { text: displayText, references, attachments: displayAttachments } : undefined;
+      const result = await onSend(text, outgoing.length > 0 ? outgoing : undefined, dispatchSessionId, promptsToSend.length ? promptsToSend : undefined, delivery, skillsToSend.length ? skillsToSend : undefined, composerDisplay);
       if (result.status !== 'dispatched') {
         const failure = result.tabFailure;
         if (failure) {
@@ -489,7 +557,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
       setValue('');
       updateAttachments(() => []);
-      setSlashPrompt(null);
+      setSlashPrompts([]);
       setSlashToken(null);
       setHistoryIndex(null);
       setDraft('');
@@ -506,7 +574,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useEffect(() => {
     setHistoryIndex(null);
     setDraft('');
-    setSlashPrompt(null);
+    setSlashPrompts([]);
     setSlashToken(null);
     slashPromptSeqRef.current++;
     interimSuffixRef.current = '';
@@ -529,6 +597,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         if (tab) insertTabs([tab]);
         return true;
       }
+    }
+
+    if (isSlashMenuVisible && e.key === 'Tab' && !e.shiftKey && slashSearchRef.current) {
+      slashSearchRef.current.focus();
+      return true;
     }
 
     // Slash menu keyboard navigation. Only active while the menu is actually
@@ -554,20 +627,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     // 菜单开着就关菜单，没有候选（「还没有提示词」/ 无匹配）时也一样；消费掉让
     // footer 上的 Esc 停止不再接手
     if (isSlashMenuVisible && e.key === 'Escape') {
-      setSlashToken(null);
+      dismissSlashMenu();
       return true;
     }
 
-    // 光标停在最前面再按退格 = 摘掉挂着的提示词（0 位 widget）。整块摘除是唯一
-    // 粒度，因为它压根不是文本，没有「删掉一半」这回事。
-    if (e.key === 'Backspace' && slashPrompt) {
-      const sel = editorRef.current?.getSelection();
-      if (sel && sel.start === 0 && sel.end === 0) {
-        setSlashPrompt(null);
-        slashPromptSeqRef.current++;
-        return true;
-      }
-    }
 
     // ↑ / ↓ navigate previously sent user messages, but only when the caret
     // is at the absolute start (↑) or end (↓) of the composer, so multi-line
@@ -641,10 +704,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const handleEditQueued = async (item: QueuedPromptView) => {
     // 连点时第二次会拿到同一份取回结果，内容就会被并进来两遍
     if (isDispatchingRef.current || editingQueuedRef.current || !onTakeQueued) return;
-    if (item.slashPromptName && slashPrompt) {
-      toast.warning(t('chat.composer.queue.slashConflict'));
-      return;
-    }
     if (item.attachmentCount > freeSlots()) {
       toast.warning(t('chat.composer.maxAttachments', [MAX_ATTACHMENT_COUNT]));
       return;
@@ -666,19 +725,35 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       .filter((s) => !existing.has(s.filePath))
       .map((s) => `/${s.name}`)
       .join(' ');
-    setValue((prev) => {
-      const { request } = splitTabReferenceContext(taken.text);
-      const base = request ? (prev.trim() ? `${prev}\n${request}` : request) : prev;
-      return skillSuffix ? `${base}${base && !/\s$/.test(base) ? ' ' : ''}${skillSuffix}` : base;
-    });
-    setHistoryIndex(null);
-    if (taken.slashPrompt) {
-      slashPromptSeqRef.current++;
-      setSlashPrompt(taken.slashPrompt);
-    }
+    // 提示词胶囊的 token 也要回填进文档，否则正文挂上了却没有胶囊可见。
+    const suffix = [...(taken.slashPrompts ?? []).map((p) => `/${p.name}`), skillSuffix].filter(Boolean).join(' ');
     const restored = supportsImageRef.current
       ? taken.attachments
-      : taken.attachments.filter((a) => a.type !== 'image');
+      : taken.attachments.filter((att) => att.type !== 'image');
+    const remapped = new Map<string, string>();
+    const queuedInline = taken.attachments.filter((att) => att.type === 'file' || att.type === 'image');
+    taken.composerDisplay?.attachments?.forEach(({ id, type }, index) => {
+      const att = queuedInline[index];
+      if (att?.type !== type || !restored.includes(att)) return;
+      const newId = crypto.randomUUID();
+      attachmentIds.current.set(att, newId);
+      remapped.set(id, attachmentToken(newId));
+    });
+    setValue((prev) => {
+      if (taken.composerDisplay) {
+        const text = describeAttachmentTokens(taken.composerDisplay.text, remapped);
+        return prev.trim() ? `${prev}\n${text}` : text;
+      }
+      const { request } = splitTabReferenceContext(taken.text);
+      const base = request ? (prev.trim() ? `${prev}\n${request}` : request) : prev;
+      return suffix ? `${base}${base && !/\s$/.test(base) ? ' ' : ''}${suffix}` : base;
+    });
+    setHistoryIndex(null);
+    const takenPrompts = taken.slashPrompts ?? [];
+    if (takenPrompts.length) {
+      slashPromptSeqRef.current++;
+      setSlashPrompts((prev) => [...prev.filter((p) => !takenPrompts.some((q) => q.name === p.name)), ...takenPrompts]);
+    }
     if (restored.length < taken.attachments.length) toast.info(t('chat.composer.imageStripped'));
     if (restored.length > 0) updateAttachments((prev) => [...prev, ...restored]);
     focusCaretAtEnd();
@@ -691,19 +766,27 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const handleFooterKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key !== 'Escape' || e.defaultPrevented || e.nativeEvent.isComposing) return;
     if (!e.currentTarget.contains(e.target as Node)) return;
-    if (!isAgentRunning || isPicking) return;
+    if (!canStop || isPicking) return;
     e.preventDefault();
     onCancel?.();
   };
 
   const handleEditorUpdate = (text: string, caret: number, userTyped: boolean) => {
     setValue(text);
+    const activeIds = new Set(findAttachmentTokens(text).map(({ id }) => id));
+    const removed = [...previousAttachmentTokens.current].filter((id) => !activeIds.has(id) && inlineAttachments.has(id));
+    previousAttachmentTokens.current = activeIds;
+    if (removed.length) {
+      const removedAttachments = new Set(removed.map((id) => inlineAttachments.get(id)));
+      updateAttachments((prev) => prev.filter((att) => att.type !== 'file' && att.type !== 'image' || !removedAttachments.has(att)));
+    }
     if (userTyped) {
       const mention = /(?:^|[^a-zA-Z0-9_@])@([^@\s⟦⟧]*)$/u.exec(text.slice(0, caret));
       setTabMenu(mention ? { from: caret - mention[1].length - 1, to: caret, query: mention[1], multiple: false } : null);
       setActiveTabChoice(0);
     }
-    setSlashToken(findSlashToken(text, caret, findSkillTokens(text, skills, promptNames)));
+    if (userTyped) slashDismissed.current = false;
+    if (!slashDismissed.current) setSlashToken(findSlashToken(text, caret, menuTokens(text)));
     // Manual edits exit history mode — the new content becomes the draft.
     if (userTyped && historyIndex !== null) setHistoryIndex(null);
   };
@@ -722,11 +805,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   // 由外部（欢迎页示例卡片）填入文本并聚焦，不夺走输入框对 value 的所有权。
   const fill = useCallback((text: string) => {
     setValue(text);
-    setSlashToken(findSlashToken(text, text.length, findSkillTokens(text, skills, promptNames)));
+    setSlashToken(findSlashToken(text, text.length, menuTokens(text)));
     setHistoryIndex(null);
     // 等 value 提交后再聚焦并把光标移到末尾，方便用户接着改。
     focusCaretAtEnd();
-  }, [focusCaretAtEnd, skills, promptNames]);
+  }, [focusCaretAtEnd, menuTokens]);
 
   // 内联 pill 依赖已安装索引，挂载即扫一次；菜单打开时再刷（用户可能在别处导入过 Skill）。
   useEffect(() => {
@@ -740,7 +823,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }, [menuOpen]);
 
   // Filter prompts by typed search (after '/')
-  const slashFilter = slashToken?.filter ?? '';
+  const slashFilter = (slashSearch ?? slashToken?.filter ?? '').trim().toLowerCase();
   const filteredPrompts = slashFilter
     ? prompts.filter((p) => p.name.toLowerCase().includes(slashFilter) || p.description.toLowerCase().includes(slashFilter))
     : prompts;
@@ -756,7 +839,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   // in that case Enter falls through to send the literal `/xxx` text.
   // When the search is empty we keep the menu open even if there are no
   // prompts at all, so the user sees the "no prompts yet" empty state.
-  const isSlashMenuVisible = menuOpen && (slashFilter === '' || slashItems.length > 0);
+  const isSlashMenuVisible = menuOpen && (slashSearch !== null || slashFilter === '' || slashItems.length > 0);
+  useEffect(() => {
+    if (!isSlashMenuVisible) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !slashMenuRef.current?.contains(event.target)) dismissSlashMenu();
+    };
+    document.addEventListener('pointerdown', dismissOutside, true);
+    return () => document.removeEventListener('pointerdown', dismissOutside, true);
+  }, [isSlashMenuVisible, dismissSlashMenu]);
+  useEffect(() => {
+    if (!menuOpen) setSlashSearch(null);
+  }, [menuOpen]);
 
   // Clamp the highlighted index whenever the visible list changes.
   useEffect(() => {
@@ -775,7 +869,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     if (editor && token) {
       // 重复引用不再插第二枚 pill（resolveSelectedSkills 拒重复），只清掉筛选词。
       const after = value[token.to];
-      const insert = already ? '' : `/${skill.name}${after !== undefined && /\s/.test(after) ? '' : ' '}`;
+      const prevChar = token.from > 0 ? value[token.from - 1] : undefined;
+      const lead = prevChar !== undefined && !/\s/.test(prevChar) ? ' ' : '';
+      const insert = already ? '' : `${lead}/${skill.name}${after !== undefined && /\s/.test(after) ? '' : ' '}`;
       editor.replaceRange(token.from, token.to, insert);
     } else if (editor && !already) {
       const end = editor.getValue().length;
@@ -796,6 +892,35 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     el?.scrollIntoView({ block: 'nearest' });
   }, [selectedPromptIndex, isSlashMenuVisible]);
 
+  const readPromptBody = async (prompt: PromptMeta) => {
+    const raw = await vfs.readFile(`${CEBIAN_PROMPTS_DIR}/${prompt.fileName}`, 'utf8');
+    const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw as Uint8Array);
+    return parseFrontmatter(content).body.trim();
+  };
+
+  const restorePastedPrompts = async (text: string, names: readonly string[]) => {
+    const candidates = prompts.filter(({ name }) => findPromptTokens(text, [name]).length > 0);
+    if (!candidates.length || isDispatchingRef.current) return;
+    const session = sessionIdRef.current;
+    const seq = slashPromptSeqRef.current;
+    const selected = names.flatMap((name) => candidates.find((prompt) => prompt.name === name) ?? []);
+    if (!selected.length) return;
+    try {
+      const vars = await gatherTemplateVars();
+      const restored = await Promise.allSettled(selected.map(async (prompt) => ({
+        name: prompt.name,
+        body: replaceTemplateVars(await readPromptBody(prompt), vars),
+      })));
+      if (sessionIdRef.current !== session || slashPromptSeqRef.current !== seq || isDispatchingRef.current) return;
+      const live = restored.flatMap((result) =>
+        result.status === 'fulfilled' && findPromptTokens(valueRef.current, [result.value.name]).length
+          ? [result.value] : []);
+      if (live.length) setSlashPrompts((prev) => [...prev, ...live.filter(({ name }) => !prev.some((p) => p.name === name))]);
+    } catch {
+      // Leave the inserted text editable if prompt expansion fails.
+    }
+  };
+
   // Handle prompt selection from slash menu
   const handlePromptSelect = async (prompt: PromptMeta) => {
     if (isDispatchingRef.current) return;
@@ -811,29 +936,30 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       && slashPromptSeqRef.current === seq
       && sessionIdRef.current === selectedSessionId;
     try {
-      const raw = await vfs.readFile(`${CEBIAN_PROMPTS_DIR}/${prompt.fileName}`, 'utf8');
-      const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw as Uint8Array);
-      const { body } = parseFrontmatter(content);
+      const body = await readPromptBody(prompt);
       const vars = await gatherTemplateVars();
       // 模板变量在**选中的这一刻**展开：挂上去的正文就是最终会发出去的文本。
-      const replaced = replaceTemplateVars(body.trim(), vars);
+      const replaced = replaceTemplateVars(body, vars);
       if (!stillCurrent()) return;
-      setSlashPrompt({ name: prompt.name, body: replaced });
-      // 清掉用来筛选的那截 `/xxx`——它的使命结束了，提示词已经挂成标记。
-      // 读 VFS + 采集模板变量是个不短的 await，期间用户完全可能接着往下敲，
-      // 那些字是他要发的正文，一个都不能抹掉。
+      setSlashPrompts((prev) => [...prev.filter((p) => p.name !== prompt.name), { name: prompt.name, body: replaced }]);
+      // 用来筛选的那截 `/xxx` 就地换成 `/名字 ` 胶囊 token——提示词挂在光标处，
+      // 正文留在 state 里发送时进信封。读 VFS + 采集模板变量是个不短的 await，
+      // 期间用户完全可能接着往下敲，那些字是他要发的正文，一个都不能抹掉。
+      const insert = `/${prompt.name} `;
       setValue((v) => {
-        // 优先按记录的词段位置剥（菜单可在行中触发）；等待期间该段被改过再退回落底逻辑。
+        // 优先按记录的词段位置换（菜单可在行中触发）；等待期间该段被改过再退回落底逻辑。
         if (tokenAtSelect) {
           const query = queryAtSelect.slice(tokenAtSelect.from, tokenAtSelect.to);
           if (query && v.slice(tokenAtSelect.from, tokenAtSelect.from + query.length) === query) {
-            return v.slice(0, tokenAtSelect.from) + v.slice(tokenAtSelect.from + query.length).replace(/^[ \t]+/, '');
+            const prev = tokenAtSelect.from > 0 ? v[tokenAtSelect.from - 1] : undefined;
+            const lead = prev !== undefined && !/\s/.test(prev) ? ' ' : '';
+            return v.slice(0, tokenAtSelect.from) + lead + insert + v.slice(tokenAtSelect.from + query.length).replace(/^[ \t]+/, '');
           }
         }
-        if (v.startsWith(queryAtSelect)) return v.slice(queryAtSelect.length).replace(/^[ \t]+/, '');
-        // 等待期间把筛选词自己改短 / 改乱了：仍按「开头那截非空白」当筛选词剥掉。
-        if (v.startsWith('/')) return v.replace(/^\/\S*/, '').replace(/^[ \t]+/, '');
-        return v;
+        if (v.startsWith(queryAtSelect)) return insert + v.slice(queryAtSelect.length).replace(/^[ \t]+/, '');
+        // 等待期间把筛选词自己改短 / 改乱了：仍按「开头那截非空白」当筛选词换掉。
+        if (v.startsWith('/')) return insert + v.replace(/^\/\S*/, '').replace(/^[ \t]+/, '');
+        return insert + v;
       });
       setSlashToken(null);
       focusCaretAtEnd();
@@ -928,6 +1054,26 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     e.target.value = '';
   };
 
+  const restorePastedAttachments = (text: string, copied: Record<string, InlineAttachment>) => {
+    const restored = new Map<string, InlineAttachment>();
+    const tokens = findAttachmentTokens(text);
+    let remaining = Math.max(0, freeSlots());
+    for (const { id } of tokens) {
+      if (restored.has(id) || remaining === 0) continue;
+      const att = validateCopiedAttachment(copied[id], supportsImage);
+      if (!att) continue;
+      restored.set(id, att);
+      attachmentIds.current.set(att, crypto.randomUUID());
+      remaining--;
+    }
+    if (restored.size) updateAttachments((prev) => [...prev, ...restored.values()]);
+    return tokens.reverse().reduce((result, { id, from, to }) => {
+      const att = restored.get(id);
+      const replacement = att ? attachmentToken(attachmentIds.current.get(att)!) : copied[id]?.name ?? '';
+      return result.slice(0, from) + replacement + result.slice(to);
+    }, text);
+  };
+
   const handlePasteImages = (e: ClipboardEvent) => {
     if (isDispatchingRef.current) return;
     // 纯文本模型不接受粘贴的图片；文本粘贴由 ComposerEditor 统一插纯文本。
@@ -981,60 +1127,98 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       {isSlashMenuVisible && (
         <div
           ref={slashMenuRef}
-          className="absolute bottom-full left-4 right-4 mb-3 bg-popover border border-border rounded-lg shadow-xl z-50 animate-in slide-in-from-bottom-1 fade-in duration-150 max-h-60 overflow-y-auto"
+          className="absolute bottom-full left-4 right-4 mb-3 bg-popover border border-border rounded-lg shadow-xl z-50 animate-in slide-in-from-bottom-1 fade-in duration-150 overflow-hidden"
         >
-          {slashItems.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-3 px-2.5">
-              {t('chat.composer.noMatch')}
-            </p>
-          ) : (
-            <div className="py-1">
-              {filteredPrompts.length > 0 && <p className="px-3 py-1 text-xs text-muted-foreground">Prompt</p>}
-              {filteredPrompts.map((p, idx) => {
-                const selected = idx === selectedPromptIndex;
-                return (
+          <div className="max-h-52 overflow-y-auto">
+            {slashItems.length === 0 && !(prompts.length === 0 && slashFilter === '') ? (
+              <p className="text-xs text-muted-foreground text-center py-3 px-2.5">
+                {t('chat.composer.noMatch')}
+              </p>
+            ) : (
+              <div className="py-1">
+                {(filteredPrompts.length > 0 || (prompts.length === 0 && slashFilter === '')) && (
+                  <p className="px-3 py-1 text-xs text-muted-foreground">Prompt</p>
+                )}
+                {filteredPrompts.length === 0 && prompts.length === 0 && slashFilter === '' && (
                   <button
-                    key={p.fileName}
-                    data-prompt-index={idx}
-                    disabled={isDispatching}
-                    onClick={() => handlePromptSelect(p)}
-                    onMouseMove={() => { if (!isDispatching) setSelectedPromptIndex(idx); }}
-                    className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
+                    type="button"
+                    onClick={() => onOpenSettings?.('prompts')}
+                    className="w-full px-3 py-2.5 text-center text-xs text-muted-foreground transition-colors hover:bg-accent/50"
                   >
-                    <FileType className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">/{p.name}</p>
-                      {p.description && (
-                        <p className="text-xs text-muted-foreground truncate">{p.description}</p>
-                      )}
-                    </div>
+                    {t('chat.composer.noPrompts')}
                   </button>
-                );
-              })}
-              {filteredSkills.length > 0 && <p className="px-3 py-1 text-xs text-muted-foreground">Skill</p>}
-              {filteredSkills.map((skill, offset) => {
-                const idx = filteredPrompts.length + offset;
-                const referenced = docTokens.some((token) => token.filePath === skill.filePath);
-                return (
-                  <button
-                    key={skill.filePath}
-                    data-prompt-index={idx}
-                    disabled={isDispatching}
-                    onClick={() => handleSkillSelect(skill)}
-                    onMouseMove={() => { if (!isDispatching) setSelectedPromptIndex(idx); }}
-                    className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${idx === selectedPromptIndex ? 'bg-accent' : 'hover:bg-accent/50'}`}
-                  >
-                    <Box aria-hidden="true" className="size-4 mt-0.5 shrink-0 text-info" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate text-info">{skill.name}</p>
-                      {skill.description && <p className="text-xs text-muted-foreground truncate">{skill.description}</p>}
-                    </div>
-                    {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 self-center text-primary" />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                )}
+                {filteredPrompts.map((p, idx) => {
+                  const selected = idx === selectedPromptIndex;
+                  const referenced = docPromptTokens.some((token) => token.name === p.name);
+                  return (
+                    <button
+                      key={p.fileName}
+                      data-prompt-index={idx}
+                      disabled={isDispatching}
+                      onClick={() => handlePromptSelect(p)}
+                      onMouseMove={() => { if (!isDispatching) setSelectedPromptIndex(idx); }}
+                      className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
+                    >
+                      <FileText className="size-4 mt-0.5 shrink-0 text-success" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate text-success">{p.name}</p>
+                        {p.description && (
+                          <p className="text-xs text-muted-foreground truncate">{p.description}</p>
+                        )}
+                      </div>
+                      {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 self-center text-primary" />}
+                    </button>
+                  );
+                })}
+                {filteredSkills.length > 0 && <p className="px-3 py-1 text-xs text-muted-foreground">Skill</p>}
+                {filteredSkills.map((skill, offset) => {
+                  const idx = filteredPrompts.length + offset;
+                  const referenced = docTokens.some((token) => token.filePath === skill.filePath);
+                  return (
+                    <button
+                      key={skill.filePath}
+                      data-prompt-index={idx}
+                      disabled={isDispatching}
+                      onClick={() => handleSkillSelect(skill)}
+                      onMouseMove={() => { if (!isDispatching) setSelectedPromptIndex(idx); }}
+                      className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${idx === selectedPromptIndex ? 'bg-accent' : 'hover:bg-accent/50'}`}
+                    >
+                      <Box aria-hidden="true" className="size-4 mt-0.5 shrink-0 text-info" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate text-info">{skill.name}</p>
+                        {skill.description && <p className="text-xs text-muted-foreground truncate">{skill.description}</p>}
+                      </div>
+                      {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 self-center text-primary" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="p-1.5">
+            <input
+              ref={slashSearchRef}
+              type="search"
+              className={MENU_SEARCH_CLASS}
+              aria-label={t('chat.composer.searchPromptsAndSkills')}
+              placeholder={t('chat.composer.searchPromptsAndSkills')}
+              value={slashSearch ?? slashToken?.filter ?? ''}
+              onFocus={() => setSlashSearch((query) => query ?? slashToken?.filter ?? '')}
+              onChange={(event) => {
+                setSlashSearch(event.target.value);
+                setSelectedPromptIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (!['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.key === 'Escape' || slashItems.length > 0) handleKeyDown(event.nativeEvent);
+                if (event.key === 'Escape') editorRef.current?.focus();
+              }}
+            />
+          </div>
         </div>
       )}
 
@@ -1058,12 +1242,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         {tabMenu && (
           <div ref={tabMenuRef} role="region" aria-label={t('chat.composer.selectTabs')} className="absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border bg-popover p-1.5 shadow-lg">
             <p className="px-2 py-1 text-xs text-muted-foreground">{t('chat.composer.tabListTitle')}</p>
-            {tabMenu.multiple && (
-              <input className="mb-1 w-full rounded-md bg-transparent px-2 py-1 text-sm"
-                aria-label={t('chat.composer.searchTabs')} placeholder={t('chat.composer.searchTabs')}
-                value={tabMenu.query} onChange={(event) => setTabMenu({ ...tabMenu, query: event.target.value })}
-                onKeyDown={(event) => { if (event.key === 'Escape') { setTabMenu(null); editorRef.current?.focus(); } }} />
-            )}
             <div className="max-h-52 overflow-y-auto">
               {!visibleTabs.length && <div className="p-2 text-sm text-muted-foreground">{t('chat.composer.noTabs')}</div>}
               {visibleTabs.map((tab) => {
@@ -1088,6 +1266,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 );
               })}
             </div>
+            {tabMenu.multiple && (
+              <input className={MENU_SEARCH_CLASS + " mt-1"}
+                aria-label={t('chat.composer.searchTabs')} placeholder={t('chat.composer.searchTabs')}
+                value={tabMenu.query} onChange={(event) => setTabMenu({ ...tabMenu, query: event.target.value })}
+                onKeyDown={(event) => { if (event.key === 'Escape') { setTabMenu(null); editorRef.current?.focus(); } }} />
+            )}
           </div>
         )}
         {/* Top row: tools + attachments */}
@@ -1161,41 +1345,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             </Button>
           )}
 
-          {attachments.length > 0 && (
+          {attachments.some((att) => att.type === 'recording' || att.type === 'element') && (
             <>
               <Separator orientation="vertical" className="h-4! mx-1 bg-border" />
 
               {/* Attachment chips */}
               <div className="flex gap-1.5 flex-1 min-w-0 overflow-x-auto scrollbar-none items-center">
                 {attachments.map((att, i) => (
-                  att.type === 'image' ? (
-                    // Image attachment: thumbnail + label badge
-                    <Badge
-                      key={i}
-                      variant="outline"
-                      className="shrink-0 text-[0.65rem] font-mono gap-1 h-5 rounded pl-0.5 pr-0.5 text-purple-400 border-purple-400/20 bg-purple-400/5 group"
-                    >
-                      <img
-                        src={`data:${att.mimeType};base64,${att.data}`}
-                        alt={att.name || t('chat.attachments.screenshot')}
-                        className="h-3.5 w-5 rounded-sm object-cover cursor-pointer"
-                        onClick={() => showDialog('image-preview', {
-                          src: `data:${att.mimeType};base64,${att.data}`,
-                          alt: att.name || t('chat.attachments.screenshot'),
-                        })}
-                      />
-                      <span className="truncate max-w-24">
-                        {att.name || (att.source === 'screenshot' ? t('chat.attachments.screenshot') : t('chat.attachments.image'))}
-                      </span>
-                      <button
-                        className="opacity-60 hover:opacity-100 p-0.5 rounded-sm hover:bg-foreground/10 cursor-pointer"
-                        disabled={isDispatching}
-                        onClick={() => removeAttachment(i)}
-                      >
-                        <X className="size-2.5" />
-                      </button>
-                    </Badge>
-                  ) : att.type === 'recording' ? (
+                  att.type === 'file' || att.type === 'image' ? null : att.type === 'recording' ? (
                     // Recording attachment: amber chip mirroring Message.tsx;
                     // chip body downloads the JSON, X removes from the list.
                     // 录了网络时多一个按钮下载 HAR（完整网络记录）。
@@ -1232,23 +1389,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                       </button>
                     </Badge>
                   ) : (
-                    // Element / file attachment: badge chip
                     <Badge
                       key={i}
                       variant="outline"
-                      className={`shrink-0 text-[0.65rem] font-mono gap-1 h-5 rounded pl-1 pr-0.5 ${
-                        att.type === 'element'
-                          ? 'text-info border-info/20 bg-info/5'
-                          : 'text-emerald-400 border-emerald-400/20 bg-emerald-400/5'
-                      }`}
+                      className="shrink-0 text-[0.65rem] font-mono gap-1 h-5 rounded pl-1 pr-0.5 text-info border-info/20 bg-info/5"
                     >
-                      {att.type === 'element' && <Crosshair className="size-2.5 shrink-0" />}
-                      {att.type === 'file' && <FileText className="size-2.5 shrink-0" />}
-
-                      <span className="truncate max-w-24">
-                        {att.type === 'element' && att.selector}
-                        {att.type === 'file' && att.name}
-                      </span>
+                      <Crosshair className="size-2.5 shrink-0" />
+                      <span className="truncate max-w-24">{att.selector}</span>
 
                       <button
                         className="opacity-60 hover:opacity-100 p-0.5 rounded-sm hover:bg-foreground/10 cursor-pointer"
@@ -1271,13 +1418,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           value={value}
           onUpdate={handleEditorUpdate}
           tabFailures={tabFailures}
+          inlineAttachments={inlineAttachments}
           skills={skills}
           promptNames={promptNames}
-          slashPromptName={slashPrompt?.name ?? null}
+          slashPrompts={slashPrompts}
           placeholder={t('chat.composer.placeholder')}
           disabled={isDispatching}
           onKeyDown={handleKeyDown}
           onPasteImages={handlePasteImages}
+          onPasteAttachments={restorePastedAttachments}
+          onPasteText={restorePastedPrompts}
           onDropFiles={(files) => addDroppedFiles(files, [])}
           className="chat-text-input chat-font text-foreground"
         />
@@ -1321,7 +1471,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               >
                 <Square className="size-3.5" fill="currentColor" />
               </Button>
-            ) : isAgentRunning ? (
+            ) : null}
+            {showStop && !canSend ? null : isAgentRunning ? (
               <Button
                 variant="ghost"
                 size="icon-xs"

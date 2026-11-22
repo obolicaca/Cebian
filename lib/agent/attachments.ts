@@ -196,7 +196,7 @@ export function buildTextPrefix(attachments: Attachment[]): string {
 
     if (a.type === 'file') {
       blocks.push(
-        `<attached-file name="${escapeXml(a.name, { forAttribute: true })}" type="${escapeXml(a.mimeType, { forAttribute: true })}">\n${a.content}\n</attached-file>`,
+        `<attached-file name="${escapeXml(a.name, { forAttribute: true })}" type="${escapeXml(a.mimeType, { forAttribute: true })}" content-length="${a.content.length}">\n${a.content}\n</attached-file>`,
       );
     }
 

@@ -1,3 +1,4 @@
+import { wrapComposerDisplay, type ComposerDisplay } from '@/lib/agent/composer-display';
 import { findTabReferences } from '@/lib/agent/tab-references';
 
 // Hook: connects sidepanel to the background session manager via chrome.runtime Port.
@@ -17,7 +18,7 @@ import {
   type SessionSnapshot,
   type TurnSettings,
 } from '@/lib/ipc/protocol';
-import type { Attachment } from '@/lib/agent/attachments';
+import { buildTextPrefix, type Attachment } from '@/lib/agent/attachments';
 import type { FollowUpDelivery } from '@/lib/persistence/storage';
 import { buildSlashPromptBlock, type SlashPrompt } from '@/lib/ai-config/slash-prompt';
 import { buildSelectedSkillNamesBlock, SELECTED_SKILLS_ONLY_REQUEST, type SelectedSkill } from '@/lib/ai-config/selected-skills';
@@ -553,11 +554,12 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     attachments: Attachment[] | undefined,
     expectedSessionId: string | null,
     turn?: TurnSettings,
-    slashPrompt?: SlashPrompt,
+    slashPrompts?: SlashPrompt[],
     delivery?: FollowUpDelivery,
     selectedSkills?: SelectedSkill[],
     requestId?: string,
     sessionIdHint?: string,
+    composerDisplay?: ComposerDisplay,
   ): boolean => {
     if (sessionIdRef.current !== expectedSessionId) return false;
 
@@ -568,7 +570,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     const sessionId = existingSessionId ?? sessionIdHint ?? crypto.randomUUID();
 
     try {
-      port.postMessage({ type: 'prompt', sessionId, text, attachments, slashPrompt, selectedSkills, requestId, delivery, model: turn?.model, thinkingLevel: turn?.thinkingLevel });
+      port.postMessage({ type: 'prompt', sessionId, text, attachments, slashPrompts, selectedSkills, composerDisplay, requestId, delivery, model: turn?.model, thinkingLevel: turn?.thinkingLevel });
     } catch {
       if (portRef.current === port) {
         portRef.current = null;
@@ -599,8 +601,8 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       // `<user-request>`，乐观态与广播态会解析出不同的结果。提示词块则在带了提示词时才包，
       // 否则只挂了提示词、没打字的那一轮会渲染成彻底空白（连气泡都没有），像消息发丢了。
       const request = wrapUserRequest(text.trim() || (selectedSkills?.length ? SELECTED_SKILLS_ONLY_REQUEST : ''));
-      const optimisticText = [slashPrompt ? buildSlashPromptBlock(slashPrompt) : '', selectedSkills?.length ? buildSelectedSkillNamesBlock(selectedSkills) : '', request].filter(Boolean).join('\n\n');
-      const content: any[] = [{ type: 'text' as const, text: optimisticText }];
+      const optimisticText = [attachments?.length ? buildTextPrefix(attachments) : '', (slashPrompts ?? []).map((p) => buildSlashPromptBlock(p)).join('\n\n'), selectedSkills?.length ? buildSelectedSkillNamesBlock(selectedSkills) : '', request].filter(Boolean).join('\n\n');
+      const content: any[] = [{ type: 'text' as const, text: wrapComposerDisplay(composerDisplay) + optimisticText }];
       // Include image attachments in optimistic message for preview
       if (attachments) {
         for (const att of attachments) {
@@ -626,13 +628,14 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     attachments?: Attachment[],
     expectedSessionId: string | null = sessionIdRef.current,
     turn?: TurnSettings,
-    slashPrompt?: SlashPrompt,
+    slashPrompts?: SlashPrompt[],
     delivery?: FollowUpDelivery,
     selectedSkills?: SelectedSkill[],
+    composerDisplay?: ComposerDisplay,
   ): Promise<PromptDispatchResult> => {
     const trimmed = text.trim();
     // 挂了斜杠提示词时空文本也算有内容——提示词本身就是这一轮的请求（issue #53）。
-    if (!trimmed && !slashPrompt && !selectedSkills?.length) return { status: 'notDispatched', reason: 'empty' };
+    if (!trimmed && !slashPrompts?.length && !selectedSkills?.length && !attachments?.length) return { status: 'notDispatched', reason: 'empty' };
 
     const startedSessionId = expectedSessionId;
     const requestId = selectedSkills?.length || findTabReferences(trimmed).length ? crypto.randomUUID() : undefined;
@@ -652,7 +655,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       });
     };
     let ack = waitForAck();
-    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery, selectedSkills, requestId, pendingSessionId)) return ack;
+    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompts, delivery, selectedSkills, requestId, pendingSessionId, composerDisplay)) return ack;
     if (requestId) {
       promptAcksRef.current.get(requestId)?.(false);
       promptAcksRef.current.delete(requestId);
@@ -667,7 +670,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     }
 
     ack = waitForAck();
-    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompt, delivery, selectedSkills, requestId, pendingSessionId)) return ack;
+    if (dispatchPrompt(trimmed, attachments, startedSessionId, turn, slashPrompts, delivery, selectedSkills, requestId, pendingSessionId, composerDisplay)) return ack;
     if (requestId) {
       promptAcksRef.current.get(requestId)?.(false);
       promptAcksRef.current.delete(requestId);

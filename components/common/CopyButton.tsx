@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { copyText } from '@/lib/ui/clipboard';
+import { copyText, type CopiedChatReferences } from '@/lib/ui/clipboard';
 import { t } from '@/lib/i18n';
 
 /**
@@ -10,7 +10,7 @@ import { t } from '@/lib/i18n';
  * Uses `copyText({ silent: true })` because the icon swap *is* the feedback —
  * a toast on top would be noisy for an inline action.
  */
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({ text, references }: { text: string; references?: CopiedChatReferences }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -20,7 +20,7 @@ export function CopyButton({ text }: { text: string }) {
   }, []);
 
   async function onClick() {
-    const ok = await copyText(text, { silent: true });
+    const ok = await copyText(text, { silent: true, references });
     if (!ok) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     setCopied(true);

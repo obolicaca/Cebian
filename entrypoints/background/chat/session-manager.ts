@@ -1,3 +1,4 @@
+import type { ComposerDisplay } from '@/lib/agent/composer-display';
 // 会话管理器（background 单例）——把 agent 绑到一个持久化的对话会话上。
 // 持有 `Map<sessionId, AgentSession>`，每个会话有自己的 Agent + SessionToolContext（每会话隔离）。
 //
@@ -1022,7 +1023,7 @@ class SessionManager {
    *  的选择。新会话据它建行；已有会话据它就地刷新活 agent 并落库到会话行（会话
    *  行是真相）。缺省时回退全局 lastSelectedModel 充当「新对话默认种子」（向后兼容）。
    *
-   *  `slashPrompt` 是本轮携带的斜杠提示词，在 user 消息信封里自成一块，不与用户
+   *  `slashPrompts` 是本轮携带的斜杠提示词（可多条），在 user 消息信封里各成一块，不与用户
    *  自己敲的话混在一起（见 lib/ai-config/slash-prompt.ts）。
    *
    *  `delivery`：页面认为会话正忙时携带（issue #96）。会话确实还忙就排队 / 插话；已经
@@ -1034,16 +1035,17 @@ class SessionManager {
     text: string,
     attachments: Attachment[] = [],
     turn?: TurnSettings,
-    slashPrompt?: SlashPrompt,
+    slashPrompts?: SlashPrompt[],
     delivery?: FollowUpDelivery,
     selectedSkills?: SelectedSkill[],
     onAccepted?: () => void,
+    composerDisplay?: ComposerDisplay,
   ): Promise<boolean> {
     // 不带 delivery 却撞上一轮正在准备（典型：自动出队刚取走最后一条，页面看着空闲）：
     // 普通发送此刻必然与它撞车，改为排队。
     if ((delivery && this.isBusy(sessionId)) || (!delivery && this.pendingStarts.has(sessionId))) {
       if (selectedSkills?.length) await resolveSelectedSkills(selectedSkills);
-      const prompt: QueuedPrompt = { id: crypto.randomUUID(), text, attachments, slashPrompt, selectedSkills, turn: turn ?? {} };
+      const prompt: QueuedPrompt = { id: crypto.randomUUID(), text, attachments, slashPrompts, selectedSkills, composerDisplay, turn: turn ?? {} };
       await this.acceptFollowUp(sessionId, prompt, delivery ?? 'queue');
       onAccepted?.();
       return true;
@@ -1057,7 +1059,7 @@ class SessionManager {
       // Validate after the synchronous gate, but before creating a session.
       // Reuse this snapshot in the current dispatch to keep acceptance atomic.
       const resolvedSkills = selectedSkills?.length ? await resolveSelectedSkills(selectedSkills) : [];
-      return await this.startPrompt(sessionId, text, attachments, turn, slashPrompt, selectedSkills, resolvedSkills, onAccepted);
+      return await this.startPrompt(sessionId, text, attachments, turn, slashPrompts, selectedSkills, resolvedSkills, onAccepted, composerDisplay);
     } finally {
       // 令牌还在 = 这次没跑起来（被取消、上下文到顶、撞上进行中的一轮、抛错）。会话就此
       // 空闲的话，队列里的消息没有收尾会来发，暂停交给用户处理。
@@ -1078,10 +1080,11 @@ class SessionManager {
     text: string,
     attachments: Attachment[],
     turn?: TurnSettings,
-    slashPrompt?: SlashPrompt,
+    slashPrompts?: SlashPrompt[],
     selectedSkills?: SelectedSkill[],
     resolvedSkills?: ResolvedSkill[],
     onAccepted?: () => void,
+    composerDisplay?: ComposerDisplay,
   ): Promise<boolean> {
     // Persist + broadcast 'session_created' for brand-new sessions BEFORE any
     // agent setup work (model resolve, tool factory, MCP, createAgent — easily
@@ -1221,7 +1224,7 @@ class SessionManager {
       // 本轮记忆开关的单一快照：同时喂给 user 消息注入与 system prompt 刷新，
       // 保证一轮内两处读同一个值（原子门控，避免读到两个快照而前后不一致）。
       const memoryEnabled = (await memorySettings.getValue()).enabled;
-      const enriched = await composeUserMessage(text, sentAttachments, memoryEnabled, slashPrompt, selectedSkills, resolvedSkills);
+      const enriched = await composeUserMessage(text, sentAttachments, memoryEnabled, slashPrompts, selectedSkills, resolvedSkills, composerDisplay);
 
       const images = extractImages(attachments);
 
@@ -1394,7 +1397,7 @@ class SessionManager {
     let steered = false;
     try {
       const memoryEnabled = (await memorySettings.getValue()).enabled;
-      const enriched = await composeUserMessage(prompt.text, sentAttachments, memoryEnabled, prompt.slashPrompt, prompt.selectedSkills);
+      const enriched = await composeUserMessage(prompt.text, sentAttachments, memoryEnabled, prompt.slashPrompts, prompt.selectedSkills, undefined, prompt.composerDisplay);
       if (!this.canSteer(agentSession)) return false;
       const content: any[] = [{ type: 'text', text: enriched }];
       content.push(...extractImages(prompt.attachments));
@@ -1457,7 +1460,7 @@ class SessionManager {
   private async dispatchQueued(sessionId: string, prompt: QueuedPrompt): Promise<void> {
     let handedOff = false;
     try {
-      handedOff = await this.prompt(sessionId, prompt.text, prompt.attachments, prompt.turn, prompt.slashPrompt, undefined, prompt.selectedSkills);
+      handedOff = await this.prompt(sessionId, prompt.text, prompt.attachments, prompt.turn, prompt.slashPrompts, undefined, prompt.selectedSkills, undefined, prompt.composerDisplay);
     } catch (err) {
       broadcastToViewers(sessionId, {
         type: 'error',

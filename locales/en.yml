@@ -640,6 +640,7 @@ chat:
     needModel: "Please select an AI model first"
     goToSettings: "Go to settings"
     readPromptFailed: "Failed to read prompt"
+    noPrompts: "No prompts yet — create one in AI Settings"
     elementAdded: "Element already added"
     elementPickFailed: "Failed to pick element"
     elementPickUnsupported: "Element picker isn't supported on this page"
@@ -667,6 +668,7 @@ chat:
     # $1 = Skill name
     selectTabs: "Select tabs"
     tabListTitle: "Tabs"
+    searchPromptsAndSkills: "Search Prompts and Skills"
     searchTabs: "Search tabs"
     noTabs: "No matching tabs"
     tabUnavailable: "Unavailable"
@@ -675,6 +677,7 @@ chat:
     tabReadFailed: "Could not read page"
     tabReferenced: "Already referenced"
     removeSkillReference: "Remove Skill: $1"
+    removePromptReference: "Remove prompt: $1"
     removeTabReference: "Remove page reference: $1"
     tabPreviewUnavailable: "Page description unavailable"
     tabBudget: "Not enough context for all pages"
@@ -698,7 +701,6 @@ chat:
       attachmentCount:
         1: "1 attachment"
         n: "$1 attachments"
-      slashConflict: "Remove the prompt in the box first — the queued message has its own"
     iframeEnterHint: "⏎ enter"
     # Voice input (local-first speech recognition with cloud fallback)
     voiceStart: "Voice input"
