@@ -1,3 +1,4 @@
+import { ComposerToolTooltip } from './ComposerToolTooltip';
 // 录制按钮旁的小下拉：选择录「页面操作」「网络请求」哪几项（可以都不勾，此时录制按钮
 // 置灰）。选项状态由 RecordButton 持有（与开始录制读的是同一份），这里只负责展示与修改。
 //
@@ -53,17 +54,19 @@ export function RecorderOptionsMenu({ options, onChange, disabled }: RecorderOpt
 
   return (
     <Popover open={open && !disabled} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          title={t('chat.recorder.options')}
-          disabled={disabled}
-          className="h-7 w-5"
-        >
-          <ChevronDown className="size-3" />
-        </Button>
-      </PopoverTrigger>
+      <ComposerToolTooltip label={t('chat.recorder.options')}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('chat.recorder.options')}
+            disabled={disabled}
+            className="h-7 w-5"
+          >
+            <ChevronDown className="size-3" />
+          </Button>
+        </PopoverTrigger>
+      </ComposerToolTooltip>
       <PopoverContent className="w-64 p-3" align="start">
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-xs font-medium text-muted-foreground">{t('chat.recorder.options')}</p>

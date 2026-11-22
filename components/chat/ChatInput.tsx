@@ -1,20 +1,22 @@
-import { ComposerAddMenu } from './ComposerAddMenu';
+import { ComposerUploadButton } from './ComposerUploadButton';
 import type { ComposerDisplay } from '@/lib/agent/composer-display';
-import { useState, useRef, useEffect, useMemo, useCallback, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react';
-import { AtSign, Box, Check, Globe, Send, Square, MousePointer2, Camera, Paperclip, Smartphone, Crosshair, FileText, X, Film, Network, ListPlus, CornerDownRight } from 'lucide-react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react';
+import { AtSign, Box, Check, Globe, History, Send, Square, MousePointer2, Camera, Paperclip, Smartphone, Crosshair, FileText, X, Film, Network, ListPlus, CornerDownRight } from 'lucide-react';
 import { attachmentName } from './attachment-pill';
 import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, stripAttachmentTokens, validateCopiedAttachment, type InlineAttachment } from '@/lib/agent/attachment-tokens';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ComposerToolTooltip } from './ComposerToolTooltip';
 import { ModelSelector } from '@/components/chat/ModelSelector';
 import { ThinkingLevelSelector } from '@/components/chat/ThinkingLevelSelector';
 import { RecordButton } from '@/components/chat/RecordButton';
 import { MicButton } from '@/components/chat/MicButton';
 import { ContextUsageIndicator } from '@/components/chat/ContextUsageIndicator';
 import { QueuedMessages } from '@/components/chat/QueuedMessages';
+import { useSessionList } from '@/hooks/useSessionList';
+import { loadHistoryReference } from '@/lib/agent/history-reference';
 import { useStorageItem } from '@/hooks/useStorageItem';
 import { providerCredentials, customProviders as customProvidersStorage, followUpDelivery, type FollowUpDelivery, type ThinkingLevel, type ModelIdentity } from '@/lib/persistence/storage';
 import type { ContextUsage, QueuedPromptView } from '@/lib/ipc/protocol';
@@ -105,15 +107,22 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   ref,
 ) {
   const [value, setValue] = useState('');
-  const [tabMenu, setTabMenu] = useState<{ from: number; to: number; query: string; multiple: boolean } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ from: number; to: number; query: string } | null>(null);
   const [browserTabs, setBrowserTabs] = useState<chrome.tabs.Tab[]>([]);
   const [tabFailures, setTabFailures] = useState<Record<string, string>>({});
-  const [activeTabChoice, setActiveTabChoice] = useState(0);
+  const [activeReferenceChoice, setActiveReferenceChoice] = useState<number | null>(null);
   useEffect(() => {
     setTabMenu(null);
     setTabFailures({});
   }, [sessionId]);
   const tabMenuOpen = tabMenu !== null;
+  const { sessions, loading: historyLoading } = useSessionList(tabMenuOpen);
+  const historySelection = useRef(0);
+  const [historyPending, setHistoryPending] = useState(false);
+  useLayoutEffect(() => {
+    setHistoryPending(false);
+    return () => { historySelection.current++; };
+  }, [tabMenu, sessionId, value]);
   const tabMenuRef = useRef<HTMLDivElement>(null);
   const tabTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -144,6 +153,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     ((tab.title ?? '') + ' ' + tabDomain(tab)).toLowerCase().includes(tabMenu.query.toLowerCase())) : [];
   const referencedTabs = new Set(findTabReferences(value).map(({ ref }) => `${ref.tabId}:${ref.url}`));
   const selectableTabs = visibleTabs.filter((tab) => tab.id !== undefined && isReferenceableTab(tab.url));
+  const historyChoices = sessions.filter((session) => session.id !== sessionId && session.messageCount > 0);
+  const visibleHistory = tabMenu ? historyChoices.filter((session) =>
+    session.title.toLowerCase().includes(tabMenu.query.trim().toLowerCase())) : [];
   const insertTabs = (tabs: chrome.tabs.Tab[]) => {
     if (!tabMenu || !tabs.length) return;
     const tokens = tabs.flatMap((tab) => tab.id === undefined || !tab.url ? [] : [
@@ -156,7 +168,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     const caret = tabMenu.from + insertion.length;
     editor.focus();
     setTabMenu({ ...tabMenu, from: caret, to: caret, query: '' });
-    setActiveTabChoice(0);
+    setActiveReferenceChoice(null);
   };
   // 光标正在编辑的 `/xxx` 词段（斜杠菜单触发器）；null = 不挂菜单。
   const [slashToken, setSlashToken] = useState<SlashToken | null>(null);
@@ -165,6 +177,28 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   // 本轮挂着的斜杠提示词。选中 `/x` 不把正文倒进输入框，而是在光标处插入一枚
   // `/名字` 内联胶囊（ComposerEditor 的 replace 装饰），正文在发送时自成信封里的一段，
   // 不掺进用户自己敲的话（issue #53）。胶囊是原子范围：整块删除，不可拆半。
+  const insertHistory = async (id: string) => {
+    if (!tabMenu || historyPending || isDispatchingRef.current) return;
+    const seq = ++historySelection.current;
+    const editor = editorRef.current;
+    setHistoryPending(true);
+    try {
+      const token = await loadHistoryReference(id);
+      if (historySelection.current !== seq || !editor || editorRef.current !== editor || isDispatchingRef.current) return;
+      if (!token) {
+        toast.error(t('chat.composer.historyReferenceUnavailable'));
+        return;
+      }
+      editor.replaceRange(tabMenu.from, tabMenu.to, token + ' ');
+      setTabMenu(null);
+      editor.focus();
+    } catch {
+      if (historySelection.current === seq) toast.error(t('chat.composer.historyReferenceUnavailable'));
+    } finally {
+      if (historySelection.current === seq) setHistoryPending(false);
+    }
+  };
+
   const historyReferences = useMemo(() => findQuoteTokens(value).flatMap(({ title, sessionId }) =>
     title === undefined ? [] : [{ title, sessionId }]), [value]);
   const [slashPrompts, setSlashPrompts] = useState<SlashPrompt[]>([]);
@@ -586,22 +620,34 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }, [sessionId, speech.stop]);
 
   /** ComposerEditor 的 keydown 代理：返回 true 表示已消费（CM 不再接手）。 */
+  const handleReferenceKeyDown = (e: globalThis.KeyboardEvent): boolean => {
+    if (!tabMenu || e.isComposing) return false;
+    if (e.key === 'Escape') {
+      setTabMenu(null);
+      editorRef.current?.focus();
+      return true;
+    }
+    const count = selectableTabs.length + visibleHistory.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const forward = e.key === 'ArrowDown';
+      if (count) setActiveReferenceChoice((index) => index === null
+        ? (forward ? 0 : count - 1)
+        : (index + count + (forward ? 1 : -1)) % count);
+      return true;
+    }
+    if (e.key !== 'Enter' || e.shiftKey) return false;
+    if (activeReferenceChoice === null || historyPending) return true;
+    const tab = selectableTabs[activeReferenceChoice];
+    const history = visibleHistory[activeReferenceChoice - selectableTabs.length];
+    if (tab) insertTabs([tab]);
+    else if (history) void insertHistory(history.id);
+    return true;
+  };
+
   const handleKeyDown = (e: globalThis.KeyboardEvent): boolean => {
     // Don't intercept anything while the IME is composing (e.g. Chinese pinyin).
     if (e.isComposing) return false;
-    if (tabMenu) {
-      if (e.key === 'Escape') { setTabMenu(null); return true; }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        const count = selectableTabs.length;
-        if (count) setActiveTabChoice((index) => (index + count + (e.key === 'ArrowDown' ? 1 : -1)) % count);
-        return true;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        const tab = selectableTabs[activeTabChoice];
-        if (tab) insertTabs([tab]);
-        return true;
-      }
-    }
+    if (handleReferenceKeyDown(e)) return true;
 
     if (isSlashMenuVisible && e.key === 'Tab' && !e.shiftKey && slashSearchRef.current) {
       slashSearchRef.current.focus();
@@ -786,8 +832,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     }
     if (userTyped) {
       const mention = /(?:^|[^a-zA-Z0-9_@])@([^@\s⟦⟧]*)$/u.exec(text.slice(0, caret));
-      setTabMenu(mention ? { from: caret - mention[1].length - 1, to: caret, query: mention[1], multiple: false } : null);
-      setActiveTabChoice(0);
+      setTabMenu(mention ? { from: caret - mention[1].length - 1, to: caret, query: mention[1] } : null);
+      setActiveReferenceChoice(null);
     }
     if (userTyped) slashDismissed.current = false;
     if (!slashDismissed.current) setSlashToken(findSlashToken(text, caret, menuTokens(text)));
@@ -1245,9 +1291,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
       <div className="relative border border-border rounded-xl bg-card focus-within:border-border/80 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
         {tabMenu && (
-          <div ref={tabMenuRef} role="region" aria-label={t('chat.composer.selectTabs')} className="chat-menu-text absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border bg-popover p-1.5 shadow-lg">
-            <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('chat.composer.tabListTitle')}</p>
+          <div ref={tabMenuRef} role="region" aria-label={t('chat.composer.selectReferences')} className="chat-menu-text absolute bottom-full left-0 right-0 z-30 mb-1 rounded-xl border bg-popover p-1.5 shadow-lg">
             <div className="max-h-52 overflow-y-auto">
+              <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('chat.composer.tabListTitle')}</p>
               {!visibleTabs.length && <div className="p-2 text-[0.85em] text-muted-foreground">{t('chat.composer.noTabs')}</div>}
               {visibleTabs.map((tab) => {
                 const id = tab.id;
@@ -1256,7 +1302,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 return (
                   <button key={id ?? tab.index} type="button" disabled={disabled}
                     onMouseDown={(event) => event.preventDefault()} onClick={() => insertTabs([tab])}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${!tabMenu.multiple && selectableTabs[activeTabChoice] === tab ? 'bg-accent' : ''}`}>
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${activeReferenceChoice !== null && selectableTabs[activeReferenceChoice] === tab ? 'bg-accent' : ''}`}>
                     <span aria-hidden="true" className="relative size-4 shrink-0">
                       {tab.favIconUrl && <img key={tab.favIconUrl} src={tab.favIconUrl} alt="" referrerPolicy="no-referrer"
                         className="peer size-4 rounded-sm object-contain" onError={(event) => { event.currentTarget.hidden = true; }} />}
@@ -1270,26 +1316,37 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                   </button>
                 );
               })}
+              <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('common.history')}</p>
+              {historyLoading && <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('common.loading')}</p>}
+              {!historyLoading && !visibleHistory.length && <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('common.empty.history')}</p>}
+              {visibleHistory.map((session, index) => {
+                const title = session.title.trim().slice(0, 512) || 'Chat';
+                const referenced = historyReferences.some((ref) => ref.sessionId === session.id)
+                  || (historyReferences.some((ref) => !ref.sessionId && ref.title === title)
+                    && historyChoices.filter((item) => (item.title.trim().slice(0, 512) || 'Chat') === title).length === 1);
+                return (
+                  <button key={session.id} type="button" title={session.title} disabled={historyPending || isDispatching}
+                    onMouseDown={(event) => event.preventDefault()} onClick={() => void insertHistory(session.id)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${activeReferenceChoice === selectableTabs.length + index ? 'bg-accent' : ''}`}>
+                    <History className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                    {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 text-primary" />}
+                  </button>
+                );
+              })}
             </div>
-            {tabMenu.multiple && (
-              <input className={MENU_SEARCH_CLASS + " mt-1"}
-                aria-label={t('chat.composer.searchTabs')} placeholder={t('chat.composer.searchTabs')}
-                value={tabMenu.query} onChange={(event) => setTabMenu({ ...tabMenu, query: event.target.value })}
-                onKeyDown={(event) => { if (event.key === 'Escape') { setTabMenu(null); editorRef.current?.focus(); } }} />
-            )}
+            <input className={MENU_SEARCH_CLASS + " mt-1"}
+              aria-label={t('chat.composer.searchReferences')} placeholder={t('chat.composer.searchReferences')}
+              value={tabMenu.query} onChange={(event) => {
+                setActiveReferenceChoice(null);
+                setTabMenu({ ...tabMenu, query: event.target.value });
+              }}
+              onKeyDown={(event) => { if (handleReferenceKeyDown(event.nativeEvent)) event.preventDefault(); }} />
           </div>
         )}
         {/* Top row: tools + attachments */}
         <div className="flex items-center gap-0.5 px-2.5 pt-2.5 pb-2">
-          <ComposerAddMenu key={sessionId ?? 'new'} disabled={isDispatching} historyReferences={historyReferences}
-            onUpload={() => fileInputRef.current?.click()}
-            onHistorySelect={(token) => {
-              const editor = editorRef.current;
-              if (!editor || isDispatchingRef.current) return false;
-              const { end } = editor.getSelection();
-              editor.replaceRange(end, end, token + ' ');
-              return true;
-            }} />
+          <ComposerUploadButton disabled={isDispatching} onUpload={() => fileInputRef.current?.click()} />
           <input
             ref={fileInputRef}
             type="file"
@@ -1299,73 +1356,67 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             disabled={isDispatching}
             onChange={handleFileUpload}
           />
-          <Button ref={tabTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
-            aria-label={t('chat.composer.selectTabs')} title={t('chat.composer.selectTabs')}
-            aria-expanded={tabMenuOpen} disabled={isDispatching}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (tabMenu) { setTabMenu(null); return; }
-              const selection = editorRef.current?.getSelection() ?? { start: value.length, end: value.length };
-              setTabMenu({ from: selection.start, to: selection.end, query: '', multiple: true });
-            }}>
-            <AtSign className="size-3.5" />
-          </Button>
-          <Button ref={slashTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
-            aria-label={t('chat.composer.selectPromptsAndSkills')} title={t('chat.composer.selectPromptsAndSkills')}
-            aria-expanded={isSlashMenuVisible} disabled={isDispatching}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (isSlashMenuVisible) { dismissSlashMenu(); return; }
-              const at = editorRef.current?.getSelection().end ?? value.length;
-              setSlashSearch('');
-              setSlashToken({ from: at, to: at, filter: '' });
-            }}>
-            <Paperclip className="size-3.5" />
-          </Button>
-          {/* Tool icons */}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            title={isPicking ? t('chat.composer.cancelPick') : t('chat.composer.pickElement')}
-            onClick={handlePickElement}
-            disabled={isDispatching}
-            className={`size-7 ${isPicking ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
-          >
-            <MousePointer2 className="size-3.5" />
-          </Button>
-          <RecordButton disabled={isDispatching} />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                // span 包裹：按钮 disabled 时本身不接收指针事件，靠外层 span 触发 tooltip。
-                className="inline-flex"
-              >
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={handleScreenshot}
-                  disabled={isDispatching || !supportsImage}
-                  className="size-7"
-                >
-                  <Camera className="size-3.5" />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {supportsImage ? t('chat.composer.screenshot') : t('chat.composer.modelNoImage')}
-            </TooltipContent>
-          </Tooltip>
-          {mobileSupported && (
+          <ComposerToolTooltip label={t('chat.composer.selectReferences')}>
+            <Button ref={tabTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
+              aria-label={t('chat.composer.selectReferences')}
+              aria-expanded={tabMenuOpen} disabled={isDispatching}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (tabMenu) { setTabMenu(null); return; }
+                const selection = editorRef.current?.getSelection() ?? { start: value.length, end: value.length };
+                setActiveReferenceChoice(null);
+                setTabMenu({ from: selection.start, to: selection.end, query: '' });
+                requestAnimationFrame(() => tabMenuRef.current?.querySelector('input')?.focus());
+              }}>
+              <AtSign className="size-3.5" />
+            </Button>
+          </ComposerToolTooltip>
+          <ComposerToolTooltip label={t('chat.composer.selectPromptsAndSkills')}>
+            <Button ref={slashTriggerRef} type="button" variant="ghost" size="icon-xs" className="size-7"
+              aria-label={t('chat.composer.selectPromptsAndSkills')}
+              aria-expanded={isSlashMenuVisible} disabled={isDispatching}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (isSlashMenuVisible) { dismissSlashMenu(); return; }
+                const at = editorRef.current?.getSelection().end ?? value.length;
+                setSlashSearch('');
+                setSlashToken({ from: at, to: at, filter: '' });
+              }}>
+              <Paperclip className="size-3.5" />
+            </Button>
+          </ComposerToolTooltip>
+          <ComposerToolTooltip label={isPicking ? t('chat.composer.cancelPick') : t('chat.composer.pickElement')}>
             <Button
               variant="ghost"
               size="icon-xs"
-              title={t('chat.composer.mobileMode')}
-              className={`size-7 ${isActiveTabMobile ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
-              onClick={toggleMobile}
+              aria-label={isPicking ? t('chat.composer.cancelPick') : t('chat.composer.pickElement')}
+              onClick={handlePickElement}
               disabled={isDispatching}
+              className={`size-7 ${isPicking ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
             >
-              <Smartphone className="size-3.5" />
+              <MousePointer2 className="size-3.5" />
             </Button>
+          </ComposerToolTooltip>
+          <RecordButton disabled={isDispatching} />
+          <ComposerToolTooltip label={supportsImage ? t('chat.composer.screenshot') : t('chat.composer.modelNoImage')}>
+            <Button variant="ghost" size="icon-xs" aria-label={t('chat.composer.screenshot')}
+              onClick={handleScreenshot} disabled={isDispatching || !supportsImage} className="size-7">
+              <Camera className="size-3.5" />
+            </Button>
+          </ComposerToolTooltip>
+          {mobileSupported && (
+            <ComposerToolTooltip label={t('chat.composer.mobileMode')}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('chat.composer.mobileMode')}
+                className={`size-7 ${isActiveTabMobile ? 'bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary' : ''}`}
+                onClick={toggleMobile}
+                disabled={isDispatching}
+              >
+                <Smartphone className="size-3.5" />
+              </Button>
+            </ComposerToolTooltip>
           )}
 
           {attachments.some((att) => att.type === 'recording' || att.type === 'element') && (

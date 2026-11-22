@@ -1,3 +1,4 @@
+import { ComposerToolTooltip } from './ComposerToolTooltip';
 // Toolbar button that toggles the user-action recorder.
 //
 // Icon-only. The state difference is expressed purely through icon
@@ -202,18 +203,20 @@ export function RecordButton({ disabled }: RecordButtonProps) {
   if (isOwner) {
     return (
       <span className="inline-flex items-center">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          title={t('chat.recorder.stop')}
-          onClick={() => { void stop(); }}
-          // Always allow stopping, even while the agent is running — losing
-          // the recording because of an unrelated agent run is worse than
-          // letting the user free up the tab observer.
-          className="size-7 text-rose-500 hover:text-rose-400 hover:bg-rose-500/10"
-        >
-          <CircleDot className="size-3.5 animate-pulse" />
-        </Button>
+        <ComposerToolTooltip label={t('chat.recorder.stop')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('chat.recorder.stop')}
+            onClick={() => { void stop(); }}
+            // Always allow stopping, even while the agent is running — losing
+            // the recording because of an unrelated agent run is worse than
+            // letting the user free up the tab observer.
+            className="size-7 text-rose-500 hover:text-rose-400 hover:bg-rose-500/10"
+          >
+            <CircleDot className="size-3.5 animate-pulse" />
+          </Button>
+        </ComposerToolTooltip>
         <RecorderOptionsMenu options={options} onChange={changeOptions} disabled />
       </span>
     );
@@ -227,18 +230,18 @@ export function RecordButton({ disabled }: RecordButtonProps) {
   const noneSelected = !options.interactions && !options.network;
   return (
     <span className="inline-flex items-center">
-      <span className="inline-flex" title={noneSelected ? t('chat.recorder.noneSelected') : undefined}>
+      <ComposerToolTooltip label={t(noneSelected ? 'chat.recorder.noneSelected' : 'chat.recorder.start')}>
         <Button
           variant="ghost"
           size="icon-xs"
-          title={t('chat.recorder.start')}
+          aria-label={t('chat.recorder.start')}
           onClick={handleStart}
           disabled={disabled || saved == null || starting || noneSelected}
           className="size-7"
         >
           <CircleDot className="size-3.5" />
         </Button>
-      </span>
+      </ComposerToolTooltip>
       <RecorderOptionsMenu options={options} onChange={changeOptions} disabled={disabled || isRecording || saved == null || starting} />
     </span>
   );

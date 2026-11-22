@@ -5,6 +5,7 @@ import { t } from '@/lib/i18n';
 export const QUOTE_PILL_STYLE = 'bg-info/10 text-info';
 
 export const TAB_PILL_LAYOUT = 'chat-inline-pill max-w-[min(18rem,100%)]';
+export const COMPOSER_PREVIEW_CLASS = 'z-50 max-w-[calc(100vw-16px)] rounded-md border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md';
 const PREVIEW_DESCRIPTION_LIMIT = 80;
 
 async function readDescription(reference: TabReference): Promise<string> {
@@ -51,7 +52,7 @@ export function attachPillPreview(anchor: HTMLElement, summary: string, detail?:
       const panel = document.createElement('div');
       preview = panel;
       panel.role = 'tooltip';
-      panel.className = 'fixed z-50 w-60 max-w-[calc(100vw-16px)] rounded-md border bg-popover p-2 text-xs leading-snug text-popover-foreground shadow-md ' +
+      panel.className = `fixed w-60 ${COMPOSER_PREVIEW_CLASS} ` +
         (fullText ? 'overflow-y-auto' : 'pointer-events-none overflow-hidden');
       if (fullText) {
         panel.addEventListener('pointerenter', () => clearTimeout(closeTimer));
