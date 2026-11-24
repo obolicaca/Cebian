@@ -18,14 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## 1.8.4 - 2026-11-24
+
 ### 新增 / Added
 
 - 已完成的助手回复支持划词复制纯文本或 Markdown、插入引用及使用 Cebian 首选搜索引擎搜索。回复操作栏也可引用整条回复，两种引用均以可预览、可移除的纯文本胶囊插入草稿
 - 对话可从侧边栏展开为居中的独立标签页，并返回原侧边栏及会话
 - 实验性 Chrome 构建可加载离线 Pyodide 运行时。经授权后，`run_skill` 可执行已安装 Skill 的 Python 脚本；测试 Skill 可将选中的网页打包为可导入的 Skill ZIP
 
-- 侧边栏输入框支持通过 `/` 搜索并调用已安装的 Skill，可在同一条消息中选择多个 Skill，并与一个 Prompt 组合使用
-- 通过 `@` 跨窗口引用多个标签页，与提问和 Skill 胶囊混排。发送时读取正文，追问和重试可复用已保存的页面快照
+- 侧边栏输入框支持通过 `/` 搜索 Prompt 和 Skill，可在同一条消息中插入多个 Prompt 和 Skill 胶囊
+- 通过 `@` 引用其他窗口的标签页和历史对话。发送时读取网页正文，追问和重试可复用已保存的页面快照
 - 标签页和 Skill 的选择菜单标记已选项。草稿中的胶囊可悬停查看简短介绍，也可点击叉号移除
 - 插件安装或更新时提供默认的 `skill-creator` 和 `find-skills`
 - 新增模型：Claude Fable 5.2（Anthropic、GitHub Copilot、OpenRouter、Vercel AI Gateway），GPT-6.2 Astra 与 GPT-6.2 Sol（OpenAI、OpenAI Codex、GitHub Copilot、OpenRouter、Vercel AI Gateway），Gemini 4 Carbon / Hydrogen / Neon（Google、GitHub Copilot、OpenRouter、Vercel AI Gateway），GitHub Copilot 的 MAI Code 2 与 MAI Code 2 Flash，OpenAI 的 GPT-6 Cyber，Kimi K3.1 Pro（Fireworks、Hugging Face、Together），Qwen4 Max（OpenRouter、Vercel AI Gateway）；其余提供商的内置模型列表也同步到了最新
@@ -33,8 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Select text in a completed assistant reply to copy plain text or Markdown, quote it, or search with Cebian's preferred engine. The reply toolbar also quotes the whole reply. Both quote actions insert removable plain-text chips with previews
 - Expand a chat from the side panel into a centered browser tab and return to the original side panel and conversation
 - Experimental Chrome builds can bundle an offline Pyodide runtime. With approval, `run_skill` runs installed Python Skill scripts, and the demo Skill packages selected tabs into an importable Skill ZIP
-- The side panel composer now searches and invokes installed Skills with `/`, supports multiple Skills in one message, and can combine them with one Prompt
-- Reference tabs across browser windows with `@`, alongside message text and Skill chips. Page content is captured on send and can be reused for follow-ups and retries
+- Search Prompts and Skills with `/` in the side panel composer and insert multiple Prompt and Skill chips in one message
+- Reference tabs across browser windows and previous chats with `@`. Page content is captured on send and can be reused for follow-ups and retries
 - Tab and Skill pickers mark references already in the draft. Hover over a draft chip for a short preview or click its remove button
 - Install or update Cebian to get the bundled `skill-creator` and `find-skills`
 - Added models: Claude Fable 5.2 (Anthropic, GitHub Copilot, OpenRouter, Vercel AI Gateway), GPT-6.2 Astra and GPT-6.2 Sol (OpenAI, OpenAI Codex, GitHub Copilot, OpenRouter, Vercel AI Gateway), Gemini 4 Carbon / Hydrogen / Neon (Google, GitHub Copilot, OpenRouter, Vercel AI Gateway), MAI Code 2 and MAI Code 2 Flash on GitHub Copilot, GPT-6 Cyber on OpenAI, Kimi K3.1 Pro (Fireworks, Hugging Face, Together), and Qwen4 Max (OpenRouter, Vercel AI Gateway); the built-in model lists of the other providers are refreshed too
@@ -55,7 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### 修复 / Fixed
 
+- 修复对话输入框的 `@` 与 `/` 菜单键盘交互。方向键切换高亮项，Enter 将其作为胶囊插入输入框
+- 选完网页后可用 Enter 发送草稿，Shift + Enter 在输入框换行。若网页引用导致发送失败，保留草稿并提供移除失败引用的操作
 - 修复独立设置页中 Skill ZIP 导入预览无法打开的问题
+- 修复后台断线后输入框仍等待发送确认而无法编辑的问题，恢复编辑时保留草稿
 
 - 修复停止任务后，模型同一批发起、还没来得及执行的工具调用卡片一直转圈：现在显示为已中止的失败结果
 - 修复 GitHub Copilot 上的 GPT、Grok 与 MAI Code 模型调用工具时，会把没填的可选参数补成空字符串或编造的值
@@ -63,7 +68,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - 修复 Claude 调用定义里带 `$defs` 引用的工具（常见于 MCP 服务器）时参数出错，例如把对象传成 JSON 字符串，部分兼容 Anthropic 的网关还会直接拒绝请求
 - 修复 OpenRouter 上输出上限接近上下文窗口的模型（如 DeepSeek Flash）报 400「超过最大上下文长度」
 
+- Fixed keyboard navigation in the composer's `@` and `/` menus. Arrow keys move the highlight, and Enter inserts the highlighted item as an inline chip
+- After selecting a page, use Enter to send the draft or Shift + Enter to insert a line break. If a page reference blocks sending, the draft is preserved and the failed references can be removed
 - Fixed the Skill ZIP import preview in standalone settings
+- Fixed the chat composer staying locked while waiting for a send confirmation after a background disconnect. The draft remains available for editing
 - Fixed tool calls that the model requested in the same batch but that had not started yet spinning forever after you stop a task; they now show as aborted, failed results
 - Fixed GitHub Copilot's GPT, Grok and MAI Code models filling optional tool arguments they left out with empty strings or invented values
 - Fixed reasoning models such as Qwen on Groq failing with `400 Unexpected message role`: on Chat Completions endpoints other than OpenAI's own API, the system prompt is now sent with the `system` role

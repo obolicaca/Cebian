@@ -703,6 +703,8 @@ chat:
     tabClosed: "标签页已关闭"
     tabChanged: "页面已变更"
     tabReadFailed: "读取页面失败"
+    tabSendBlocked: "消息未发送：$1。移除失败的引用后可重试。"
+    removeFailedTabReferences: "移除读取失败的引用"
     tabReferenced: "已引用"
     removeSkillReference: "移除 Skill：$1"
     removePromptReference: "移除 Prompt：$1"
@@ -892,6 +894,7 @@ chat:
     notConnected: "未连接到后台服务，请稍后再试"
     # 自动重连多次失败后提示。语气是「还在试」，不保证能连上
     reconnecting: "连接断开，正在重试…"
+    promptUnconfirmed: "未收到发送确认，草稿已保留。请先检查对话中是否已收到这条消息。"
     welcomeReady: "有什么我可以帮你的？"
     # 新会话空状态里的示例卡片。*Title 是卡片上的短标题，*Prompt 是点击后
     # 填入输入框的完整文案（用户可改后再发）。

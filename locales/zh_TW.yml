@@ -703,6 +703,8 @@ chat:
     tabClosed: "分頁已關閉"
     tabChanged: "頁面已變更"
     tabReadFailed: "讀取頁面失敗"
+    tabSendBlocked: "訊息未傳送：$1。移除失敗的引用後可重試。"
+    removeFailedTabReferences: "移除讀取失敗的引用"
     tabReferenced: "已引用"
     removeSkillReference: "移除 Skill：$1"
     removePromptReference: "移除 Prompt：$1"
@@ -892,6 +894,7 @@ chat:
     notConnected: "尚未連接到背景服務，請稍後再試"
     # 自動重連多次失敗後提示。語氣是「還在試」，不保證能連上
     reconnecting: "連線中斷，正在重試…"
+    promptUnconfirmed: "未收到傳送確認，草稿已保留。請先確認對話中是否已收到這則訊息。"
     welcomeReady: "有什麼我可以幫忙的？"
     # 新工作階段空狀態裡的示例卡片。*Title 是卡片上的短標題，*Prompt 是點擊後
     # 填入輸入框的完整文案（使用者可改後再發）。

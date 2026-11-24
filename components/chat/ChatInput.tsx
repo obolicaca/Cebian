@@ -156,6 +156,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const historyChoices = sessions.filter((session) => session.id !== sessionId && session.messageCount > 0);
   const visibleHistory = tabMenu ? historyChoices.filter((session) =>
     session.title.toLowerCase().includes(tabMenu.query.trim().toLowerCase())) : [];
+  useEffect(() => {
+    if (!tabMenuOpen || activeReferenceChoice === null) return;
+    tabMenuRef.current?.querySelector('[data-reference-highlighted]')?.scrollIntoView({ block: 'nearest' });
+  }, [tabMenuOpen, activeReferenceChoice]);
+
   const insertTabs = (tabs: chrome.tabs.Tab[]) => {
     if (!tabMenu || !tabs.length) return;
     const tokens = tabs.flatMap((tab) => tab.id === undefined || !tab.url ? [] : [
@@ -532,6 +537,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
     isDispatchingRef.current = true;
     setIsDispatching(true);
+    setTabMenu(null);
     // 作废在途的提示词选中。只靠 stillCurrent() 里那个 isDispatchingRef 快照不够：
     // 一整轮发送完全可能在选中的 await 窗口内起止（gatherTemplateVars 要注入页面脚本、
     // 读剪贴板，比一次纯文本发送慢得多），等选中落定时该标志已经变回 false，那条被
@@ -577,12 +583,29 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       const result = await onSend(text, outgoing.length > 0 ? outgoing : undefined, dispatchSessionId, promptsToSend.length ? promptsToSend : undefined, delivery, skillsToSend.length ? skillsToSend : undefined, composerDisplay);
       if (result.status !== 'dispatched') {
         const failure = result.tabFailure;
-        if (failure) {
+        if (failure && sessionIdRef.current === dispatchSessionId) {
           const reason = failure.reason === 'closed' ? t('chat.composer.tabClosed')
             : failure.reason === 'navigated' ? t('chat.composer.tabChanged')
               : failure.reason === 'unreadable' ? t('chat.composer.tabUnavailable')
                 : failure.reason === 'budget' ? t('chat.composer.tabBudget') : t('chat.composer.tabReadFailed');
           setTabFailures(Object.fromEntries(failure.ids.map((id) => [id, reason])));
+          toast.error(t('chat.composer.tabSendBlocked', [reason]), {
+            action: {
+              label: t('chat.composer.removeFailedTabReferences'),
+              onClick: () => {
+                const editor = editorRef.current;
+                if (!editor || isDispatchingRef.current || sessionIdRef.current !== dispatchSessionId) return;
+                const draft = editor.getValue();
+                const failedIds = new Set(failure.ids);
+                const failed = findTabReferences(draft).filter(({ ref }) => failedIds.has(ref.id));
+                if (!failed.length) return;
+                const cleaned = failed.reverse().reduce((next, { from, to }) =>
+                  next.slice(0, from) + next.slice(to + Number(draft[to] === ' ')), draft);
+                editor.replaceRange(0, draft.length, cleaned);
+                setTabFailures((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !failedIds.has(id))));
+              },
+            },
+          });
         }
         return;
       }
@@ -620,7 +643,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }, [sessionId, speech.stop]);
 
   /** ComposerEditor 的 keydown 代理：返回 true 表示已消费（CM 不再接手）。 */
-  const handleReferenceKeyDown = (e: globalThis.KeyboardEvent): boolean => {
+  const handleReferenceKeyDown = (e: globalThis.KeyboardEvent, fromComposer = false): boolean => {
     if (!tabMenu || e.isComposing) return false;
     if (e.key === 'Escape') {
       setTabMenu(null);
@@ -636,7 +659,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       return true;
     }
     if (e.key !== 'Enter' || e.shiftKey) return false;
-    if (activeReferenceChoice === null || historyPending) return true;
+    if (historyPending) return true;
+    if (activeReferenceChoice === null) {
+      // After inserting a tab the picker stays open for more selections.
+      // A collapsed range means there is no unfinished @ query to complete.
+      return !fromComposer || tabMenu.from !== tabMenu.to;
+    }
     const tab = selectableTabs[activeReferenceChoice];
     const history = visibleHistory[activeReferenceChoice - selectableTabs.length];
     if (tab) insertTabs([tab]);
@@ -647,7 +675,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const handleKeyDown = (e: globalThis.KeyboardEvent): boolean => {
     // Don't intercept anything while the IME is composing (e.g. Chinese pinyin).
     if (e.isComposing) return false;
-    if (handleReferenceKeyDown(e)) return true;
+    if (handleReferenceKeyDown(e, true)) return true;
 
     if (isSlashMenuVisible && e.key === 'Tab' && !e.shiftKey && slashSearchRef.current) {
       slashSearchRef.current.focus();
@@ -1299,10 +1327,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 const id = tab.id;
                 const disabled = id === undefined || !isReferenceableTab(tab.url);
                 const referenced = id !== undefined && referencedTabs.has(`${id}:${tab.url}`);
+                const highlighted = activeReferenceChoice !== null && selectableTabs[activeReferenceChoice] === tab;
                 return (
                   <button key={id ?? tab.index} type="button" disabled={disabled}
+                    data-reference-highlighted={highlighted || undefined}
                     onMouseDown={(event) => event.preventDefault()} onClick={() => insertTabs([tab])}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${activeReferenceChoice !== null && selectableTabs[activeReferenceChoice] === tab ? 'bg-accent' : ''}`}>
+                    onMouseMove={() => { if (!disabled) setActiveReferenceChoice(selectableTabs.indexOf(tab)); }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left disabled:opacity-50 ${highlighted ? 'bg-accent' : ''}`}>
                     <span aria-hidden="true" className="relative size-4 shrink-0">
                       {tab.favIconUrl && <img key={tab.favIconUrl} src={tab.favIconUrl} alt="" referrerPolicy="no-referrer"
                         className="peer size-4 rounded-sm object-contain" onError={(event) => { event.currentTarget.hidden = true; }} />}
@@ -1321,13 +1352,17 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               {!historyLoading && !visibleHistory.length && <p className="px-2 py-1 text-[0.85em] text-muted-foreground">{t('common.empty.history')}</p>}
               {visibleHistory.map((session, index) => {
                 const title = session.title.trim().slice(0, 512) || 'Chat';
+                const choice = selectableTabs.length + index;
+                const highlighted = activeReferenceChoice === choice;
                 const referenced = historyReferences.some((ref) => ref.sessionId === session.id)
                   || (historyReferences.some((ref) => !ref.sessionId && ref.title === title)
                     && historyChoices.filter((item) => (item.title.trim().slice(0, 512) || 'Chat') === title).length === 1);
                 return (
                   <button key={session.id} type="button" title={session.title} disabled={historyPending || isDispatching}
+                    data-reference-highlighted={highlighted || undefined}
                     onMouseDown={(event) => event.preventDefault()} onClick={() => void insertHistory(session.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left hover:bg-accent disabled:opacity-50 ${activeReferenceChoice === selectableTabs.length + index ? 'bg-accent' : ''}`}>
+                    onMouseMove={() => { if (!historyPending && !isDispatching) setActiveReferenceChoice(choice); }}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left disabled:opacity-50 ${highlighted ? 'bg-accent' : ''}`}>
                     <History className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{session.title}</span>
                     {referenced && <Check aria-label={t('chat.composer.tabReferenced')} className="size-4 shrink-0 text-primary" />}
@@ -1379,6 +1414,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onClick={() => {
                 if (isSlashMenuVisible) { dismissSlashMenu(); return; }
                 const at = editorRef.current?.getSelection().end ?? value.length;
+                editorRef.current?.focus();
+                setTabMenu(null);
                 setSlashSearch('');
                 setSlashToken({ from: at, to: at, filter: '' });
               }}>

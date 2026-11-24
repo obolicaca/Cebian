@@ -122,6 +122,13 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const promptAcksRef = useRef(new Map<string, (accepted: boolean, tabFailure?: { ids: string[]; reason: string }) => void>());
   const sessionIdRef = useRef<string | null>(null);
+  const announcedSessionIdRef = useRef<string | null>(null);
+  const settlePromptAcks = useCallback(() => {
+    const waiters = [...promptAcksRef.current.values()];
+    promptAcksRef.current.clear();
+    for (const resolve of waiters) resolve(false);
+    return waiters.length > 0;
+  }, []);
   // 分叉在途标记（issue #60）：分叉要复制树路径与整个工作区、不是瞬时的，而按钮没有
   // 乐观隐藏，双击会建出两个副本。回包（成功 / 失败）或端口断开时清掉。
   const forkPendingRef = useRef(false);
@@ -297,6 +304,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
 
         case 'session_created':
           if (!isCurrentSession(msg.sessionId)) break;
+          announcedSessionIdRef.current = msg.sessionId;
           setPendingTools(new Map());
           setPendingPermissions(new Map());
           setState(prev => ({
@@ -480,6 +488,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
           // 在途分叉的回包随端口一起丢了，别让标记把后续分叉永久卡死。
           forkPendingRef.current = false;
           settleTakeWaiters();
+          if (settlePromptAcks()) toast.error(t('chat.session.promptUnconfirmed'));
           setState(prev => ({ ...prev, connected: false }));
         }
         scheduleRetry();
@@ -518,13 +527,14 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       connectedWaitersRef.current.clear();
       for (const resolve of waiters) resolve(false);
       settleTakeWaiters();
+      settlePromptAcks();
       portRef.current?.disconnect();
       portRef.current = null;
       recorderChannel.setPort(null);
       mcpAppResourceChannel.setPort(null);
       sessionListChannel.setPort(null);
     };
-  }, []);
+  }, [settlePromptAcks]);
 
   // ─── Actions ───
 
@@ -573,6 +583,13 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       port.postMessage({ type: 'prompt', sessionId, text, attachments, slashPrompts, selectedSkills, composerDisplay, requestId, delivery, model: turn?.model, thinkingLevel: turn?.thinkingLevel });
     } catch {
       if (portRef.current === port) {
+        // The current post threw synchronously. Its caller will retry it;
+        // earlier requests cannot receive an acknowledgement on this port.
+        if (requestId) {
+          promptAcksRef.current.get(requestId)?.(false);
+          promptAcksRef.current.delete(requestId);
+        }
+        if (settlePromptAcks()) toast.error(t('chat.session.promptUnconfirmed'));
         portRef.current = null;
         recorderChannel.setPort(null);
         mcpAppResourceChannel.setPort(null);
@@ -621,7 +638,7 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
       };
     });
     return true;
-  }, []);
+  }, [settlePromptAcks]);
 
   const send = useCallback(async (
     text: string,
@@ -643,15 +660,18 @@ export function useBackgroundAgent(callbacks: AgentPortCallbacks) {
     const waitForAck = (): Promise<PromptDispatchResult> => {
       if (!requestId) return Promise.resolve({ status: 'dispatched', sessionId: startedSessionId });
       return new Promise((resolve) => {
+        const finish = (accepted: boolean, tabFailure?: { ids: string[]; reason: string }) => {
+          clearTimeout(timeout);
+          if (!accepted && startedSessionId === null && sessionIdRef.current === pendingSessionId
+            && announcedSessionIdRef.current !== pendingSessionId) sessionIdRef.current = null;
+          resolve(accepted ? { status: 'dispatched', sessionId: pendingSessionId ?? startedSessionId } : { status: 'notDispatched', reason: 'unavailable', tabFailure });
+        };
         const timeout = setTimeout(() => {
           promptAcksRef.current.delete(requestId);
-          resolve({ status: 'notDispatched', reason: 'unavailable' });
+          finish(false);
+          toast.error(t('chat.session.promptUnconfirmed'));
         }, 5 * 60_000);
-        promptAcksRef.current.set(requestId, (accepted, tabFailure) => {
-          clearTimeout(timeout);
-          if (!accepted && startedSessionId === null && sessionIdRef.current === pendingSessionId) sessionIdRef.current = null;
-          resolve(accepted ? { status: 'dispatched', sessionId: pendingSessionId ?? startedSessionId } : { status: 'notDispatched', reason: 'unavailable', tabFailure });
-        });
+        promptAcksRef.current.set(requestId, finish);
       });
     };
     let ack = waitForAck();
