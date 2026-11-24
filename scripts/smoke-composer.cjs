@@ -61,7 +61,62 @@ async function configureWorker(worker, origin) {
   }, { origin, testDisconnect });
 }
 
-async function verifyComposer(context, origin, hasExistingTurn) {
+async function verifyCaret(page, composer, theme) {
+  const cursor = page.locator('footer .cm-cursor-primary');
+  await cursor.waitFor({ timeout: 4000 });
+  const styles = await cursor.evaluate((element) => ({
+    caretColor: getComputedStyle(element).borderLeftColor,
+    textColor: getComputedStyle(element.closest('.cm-scroller').querySelector('.cm-content')).color,
+  }));
+  assert.equal(styles.caretColor, styles.textColor, `Caret should match the text color in ${theme} mode`);
+  assert.ok((await cursor.boundingBox()).height > 0, 'The empty composer should have a visible caret');
+  const opacity = await page.locator('footer .cm-cursorLayer').evaluate((layer) => {
+    const animation = layer.getAnimations()[0];
+    if (!animation || animation.playState !== 'running') throw new Error('Caret blink is not running');
+    const duration = Number(animation.effect.getComputedTiming().duration);
+    try {
+      animation.pause();
+      animation.currentTime = duration * 0.25;
+      const on = getComputedStyle(layer).opacity;
+      animation.currentTime = duration * 0.75;
+      return [on, getComputedStyle(layer).opacity];
+    } finally {
+      animation.play();
+    }
+  });
+  assert.deepEqual(opacity, ['1', '0']);
+
+  await page.keyboard.insertText('abcdef');
+  const line = composer.locator('.cm-line').first();
+  const point = await line.evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.firstChild, 2);
+    range.collapse(true);
+    const target = range.getBoundingClientRect();
+    const origin = element.getBoundingClientRect();
+    return { x: target.left - origin.left, y: target.top - origin.top + target.height / 2 };
+  });
+  const waitForCaretAt = (offset) => page.waitForFunction((expected) => {
+    const line = document.querySelector('footer .cm-line');
+    const cursor = document.querySelector('footer .cm-cursor-primary');
+    if (!line?.firstChild || !cursor) return false;
+    const expectedPosition = document.createRange();
+    expectedPosition.setStart(line.firstChild, expected);
+    expectedPosition.collapse(true);
+    return Math.abs(cursor.getBoundingClientRect().left - expectedPosition.getBoundingClientRect().left) < 2;
+  }, offset, { timeout: 4000 });
+  await line.click({ position: point });
+  await waitForCaretAt(2);
+  await page.keyboard.press('ArrowRight');
+  await waitForCaretAt(3);
+  await page.keyboard.press('ArrowLeft');
+  await waitForCaretAt(2);
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('Backspace');
+  console.log(`PASS (${process.platform}): ${theme} caret follows mouse and arrows, contrasts and blinks`);
+}
+
+async function verifyComposer(context, origin, hasExistingTurn, theme) {
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
   await configureWorker(worker, origin);
   const sourcePage = await context.newPage();
@@ -87,6 +142,7 @@ async function verifyComposer(context, origin, hasExistingTurn) {
     };
   });
   await page.goto('chrome-extension://' + new URL(worker.url()).host + '/sidepanel.html');
+  await page.locator(`html[data-theme="${theme}"]`).waitFor({ state: 'attached' });
   const composer = page.locator('footer .cm-content');
   const replies = page.locator('[data-quote-source]').getByText(reply, { exact: true });
   const stop = page.locator('footer button:has(svg.lucide-square)');
@@ -100,6 +156,13 @@ async function verifyComposer(context, origin, hasExistingTurn) {
   };
 
   await focusComposer();
+  await verifyCaret(page, composer, theme);
+  if (theme === 'light') {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.locator('html[data-theme="dark"]').waitFor({ state: 'attached' });
+    assert.ok(await composer.evaluate((input) => input === document.activeElement), 'Switching themes should keep the caret focused');
+    await verifyCaret(page, composer, 'dark after switching');
+  }
   if (hasExistingTurn) {
     await page.keyboard.insertText('Start the conversation');
     await page.keyboard.press('Enter');
@@ -140,13 +203,15 @@ async function main() {
     const origin = 'http://127.0.0.1:' + server.address().port;
     const executablePath = process.env.CHROME_EXECUTABLE_PATH;
     for (const hasExistingTurn of [false, true]) {
+      const theme = hasExistingTurn ? 'dark' : 'light';
       const context = await chromium.launchPersistentContext('', {
         ...(executablePath ? { executablePath } : { channel: 'chromium' }),
         headless: !process.argv.includes('--headed'),
+        colorScheme: theme,
         args: ['--disable-extensions-except=' + extension, '--load-extension=' + extension],
       });
       try {
-        await verifyComposer(context, origin, hasExistingTurn);
+        await verifyComposer(context, origin, hasExistingTurn, theme);
         console.log(`PASS (${process.platform}): ${hasExistingTurn ? 'existing' : 'new'} chat recovers after a disconnected send`);
       } finally {
         await context.close();

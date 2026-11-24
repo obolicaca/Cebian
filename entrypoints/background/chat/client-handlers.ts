@@ -1,4 +1,4 @@
-import { snapshotTabReferences, TabReferenceError } from '../agent/tab-references';
+import { snapshotTabReferences } from '../agent/tab-references';
 import { findTabReferences } from '@/lib/agent/tab-references';
 
 // chat 域的客户端消息 handler：会话订阅 / 发送 / 取消 / 重试 / 工具与授权裁决 /
@@ -181,7 +181,7 @@ const chatClientHandlers: ClientHandlerMap = {
     } : undefined;
     const prepare = async () => {
       if (!findTabReferences(msg.text).length) return msg.text;
-      const budget = await sessionManager.tabReferenceBudget(sessionId, msg.model, msg.text);
+      const budget = await sessionManager.tabReferenceBudget(sessionId, msg.model, msg.text).catch(() => 0);
       const { request, context } = await snapshotTabReferences(msg.text, budget);
       return request + '\n<tab-reference-data>' + context + '</tab-reference-data>';
     };
@@ -191,10 +191,6 @@ const chatClientHandlers: ClientHandlerMap = {
     }, msg.slashPrompts, msg.delivery, msg.selectedSkills, accept, msg.composerDisplay)).then((accepted) => {
       if (!accepted && msg.requestId && !acknowledged) post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, error: 'Message was not accepted' });
     }).catch((err) => {
-      if (msg.requestId && err instanceof TabReferenceError) {
-        post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, tabFailure: { ids: err.ids, reason: err.reason } });
-        return;
-      }
       if (msg.requestId && !acknowledged) post(port, { type: 'prompt_ack', requestId: msg.requestId, accepted: false, error: err instanceof Error ? err.message : String(err) });
       postPromptError(port, sessionId, err);
     });

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import type { Agent, AgentEvent, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import {
+  clampThinkingLevel,
   createAssistantMessageEventStream,
+  getSupportedThinkingLevels,
   type Api,
   type AssistantMessage,
   type Message,
@@ -111,6 +113,30 @@ async function captureRequest(agent: Agent, text: string): Promise<{ payload: un
   expect(headers).toHaveLength(1);
   return { payload: payloads[0], headers: headers[0] };
 }
+
+describe('createCebianAgent · GLM-5.3 Prime', () => {
+  it.each([
+    ['off', 'low'],
+    ['minimal', 'low'],
+    ['low', 'low'],
+    ['medium', 'high'],
+    ['high', 'high'],
+    ['xhigh', 'max'],
+    ['max', 'max'],
+  ] as const)('maps %s to the accepted reasoning_effort %s', async (savedLevel, expected) => {
+    const glm = toModel({ id: 'acme', name: 'Acme', baseUrl: 'https://example.invalid/v1', models: [] }, {
+      modelId: 'glm-5.3-prime', name: 'GLM-5.3 Prime', reasoning: true, image: false,
+    });
+    const agent = createCebianAgent({
+      model: glm,
+      preamble: { systemPrompt: 'You are Cebian.', tools: [] },
+      thinkingLevel: clampThinkingLevel(glm, savedLevel),
+    });
+    const { payload } = await captureRequest(agent, 'hello');
+    expect(payload).toMatchObject({ model: 'glm-5.3-prime', reasoning_effort: expected });
+    expect(getSupportedThinkingLevels(glm)).toEqual(['low', 'high', 'max']);
+  });
+});
 
 describe('createCebianAgent · system 头', () => {
   beforeEach(() => {

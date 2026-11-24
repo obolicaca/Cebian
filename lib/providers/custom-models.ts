@@ -46,6 +46,19 @@ export function toModel(config: CustomProviderConfig, model: CustomModelDef): Mo
     //   静默忽略，导致「最大输出」设置不生效、被服务端默认上限截断 (#54)
     compat: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
   };
+  // GLM-5.3 Prime only accepts low, high and max on compatible endpoints.
+  // The same map drives the picker, clamping of saved levels and the wire value.
+  if (model.reasoning && /^(?:z-ai\/)?glm-5\.3-prime$/i.test(model.modelId)) {
+    base.thinkingLevelMap = {
+      off: null,
+      minimal: null,
+      low: 'low',
+      medium: null,
+      high: 'high',
+      xhigh: null,
+      max: 'max',
+    };
+  }
   // 用户自定义请求头并进 model.headers（pi-ai 会合并进请求头）；仅非空时附加
   if (config.headers && Object.keys(config.headers).length > 0) {
     base.headers = config.headers;

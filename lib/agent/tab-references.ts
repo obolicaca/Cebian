@@ -13,6 +13,7 @@ export interface TabReference {
   source?: number;
   truncated?: boolean;
   summary?: string;
+  bodyUnavailable?: boolean;
 }
 
 export function compactTabText(text: string, limit: number): string {

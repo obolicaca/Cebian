@@ -24,6 +24,9 @@ export function previewImageAttachment(att: Extract<InlineAttachment, { type: 'i
 }
 
 export function attachAttachmentPreview(anchor: HTMLElement, name: string, content = '') {
+  if (content.trim() && /\.(?:md|markdown)$/i.test(name)) {
+    return attachPillPreview(anchor, content, undefined, undefined, 'full');
+  }
   const preview = compactTabText(content.slice(0, 600), 280);
   return attachPillPreview(anchor, preview, name);
 }

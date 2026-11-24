@@ -45,7 +45,7 @@ import { useMobileEmulation } from '@/hooks/useMobileEmulation';
 import { downloadFile, formatCompactCount, isApplePlatform } from '@/lib/utils';
 import { recordingMetaText, recordingTitle } from '@/components/chat/recording-meta';
 import { t } from '@/lib/i18n';
-import { findTabReferences, isReferenceableTab, splitTabReferenceContext, tabReferenceToken } from '@/lib/agent/tab-references';
+import { findTabReferences, isReferenceableTab, splitTabReferenceContext, tabLink, tabReferenceToken } from '@/lib/agent/tab-references';
 import type { PromptDispatchResult, QueueTakeResult } from '@/hooks/useBackgroundAgent';
 
 interface ChatInputProps {
@@ -152,7 +152,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   const visibleTabs = tabMenu ? browserTabs.filter((tab) =>
     ((tab.title ?? '') + ' ' + tabDomain(tab)).toLowerCase().includes(tabMenu.query.toLowerCase())) : [];
   const referencedTabs = new Set(findTabReferences(value).map(({ ref }) => `${ref.tabId}:${ref.url}`));
-  const selectableTabs = visibleTabs.filter((tab) => tab.id !== undefined && isReferenceableTab(tab.url));
+  const selectableTabs = visibleTabs.filter((tab) => tab.id !== undefined);
+  const tabTitle = (tab: chrome.tabs.Tab) => {
+    const link = tab.url && tabLink(tab.url);
+    return (tab.title !== tab.url && tab.title) || (link && tabDomain(tab)) || t('chat.composer.tabUntitled');
+  };
   const historyChoices = sessions.filter((session) => session.id !== sessionId && session.messageCount > 0);
   const visibleHistory = tabMenu ? historyChoices.filter((session) =>
     session.title.toLowerCase().includes(tabMenu.query.trim().toLowerCase())) : [];
@@ -163,8 +167,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
 
   const insertTabs = (tabs: chrome.tabs.Tab[]) => {
     if (!tabMenu || !tabs.length) return;
-    const tokens = tabs.flatMap((tab) => tab.id === undefined || !tab.url ? [] : [
-      tabReferenceToken({ id: crypto.randomUUID(), tabId: tab.id, title: tab.title || tabDomain(tab), url: tab.url }),
+    const tokens = tabs.flatMap((tab) => tab.id === undefined ? [] : [
+      tabReferenceToken({ id: crypto.randomUUID(), tabId: tab.id, title: tabTitle(tab), url: tab.url ?? '' }),
     ]);
     const editor = editorRef.current;
     if (!editor || !tokens.length) return;
@@ -1325,8 +1329,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               {!visibleTabs.length && <div className="p-2 text-[0.85em] text-muted-foreground">{t('chat.composer.noTabs')}</div>}
               {visibleTabs.map((tab) => {
                 const id = tab.id;
-                const disabled = id === undefined || !isReferenceableTab(tab.url);
-                const referenced = id !== undefined && referencedTabs.has(`${id}:${tab.url}`);
+                const disabled = id === undefined;
+                const referenceOnly = !isReferenceableTab(tab.url);
+                const referenced = id !== undefined && referencedTabs.has(`${id}:${tab.url ?? ''}`);
                 const highlighted = activeReferenceChoice !== null && selectableTabs[activeReferenceChoice] === tab;
                 return (
                   <button key={id ?? tab.index} type="button" disabled={disabled}
@@ -1335,12 +1340,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                     onMouseMove={() => { if (!disabled) setActiveReferenceChoice(selectableTabs.indexOf(tab)); }}
                     className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 chat-menu-text text-left disabled:opacity-50 ${highlighted ? 'bg-accent' : ''}`}>
                     <span aria-hidden="true" className="relative size-4 shrink-0">
-                      {tab.favIconUrl && <img key={tab.favIconUrl} src={tab.favIconUrl} alt="" referrerPolicy="no-referrer"
+                      {tab.url && tabLink(tab.url) && tab.favIconUrl && <img key={tab.favIconUrl} src={tab.favIconUrl} alt="" referrerPolicy="no-referrer"
                         className="peer size-4 rounded-sm object-contain" onError={(event) => { event.currentTarget.hidden = true; }} />}
                       <Globe className="absolute inset-0 size-4 text-muted-foreground peer-[:not([hidden])]:hidden" />
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{tab.title || tabDomain(tab)}</span>
-                    <span className="max-w-[40%] truncate text-[0.85em] text-muted-foreground">{disabled ? t('chat.composer.tabUnavailable') : tabDomain(tab)}</span>
+                    <span className="min-w-0 flex-1 truncate">{tabTitle(tab)}</span>
+                    <span className="max-w-[40%] truncate text-[0.85em] text-muted-foreground">
+                      {disabled ? t('chat.composer.tabUnavailable') : referenceOnly ? t('chat.composer.tabBodyUnavailable') : tabDomain(tab)}
+                    </span>
                     <Check aria-label={referenced ? t('chat.composer.tabReferenced') : undefined} aria-hidden={!referenced}
                       data-tab-referenced={referenced || undefined}
                       className={`size-4 shrink-0 text-primary ${referenced ? '' : 'invisible'}`} />

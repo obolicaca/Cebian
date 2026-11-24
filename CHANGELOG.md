@@ -18,6 +18,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## 1.8.6 - 2026-11-25
+
+### 新增 / Added
+
+- 对话的网页引用胶囊支持点击标题或预览网址打开网页，也可以在预览中复制完整链接
+- 引用和历史对话的长文本可在预览中滚动。三种引用浮层统一样式，网页简介在上，网址和复制图标在底部
+- 技能说明、提示词正文和 Markdown 附件可在浮层中滚动。提示词支持一键复制全文
+
+- Open page references from the chip title or the preview URL, or copy the full link from the preview
+- Long quotes and chat history can be scrolled in the preview. All three previews share a compact layout, with the page URL and copy icon below the description
+- Skill descriptions, prompt bodies, and Markdown attachments are scrollable in their previews. Prompt bodies can also be copied in full
+
+### 修复 / Fixed
+
+- 修复自定义接口使用 GLM-5.3 Prime 时因发送不支持的思考档位而报 400 的问题。旧会话的档位会转换为模型支持的值
+- 修复对话输入框光标在暗色模式下难以看见的问题。光标颜色随主题切换，点击定位和方向键移动时正常闪烁
+- 网页引用优先发送正文，读取失败时保留标题和可共享链接，继续发送消息与其他引用。未附正文的引用会在对话中标记
+
+- Fixed invalid reasoning effort errors for GLM-5.3 Prime on custom endpoints. Saved thinking levels are adjusted to the supported values
+- Fixed the chat composer caret contrast in dark mode. The caret follows the theme and blinks after clicks and arrow-key movement
+- Page references fall back to visible text, then to title and a shareable link if the body cannot be read. The message and its other references still send, and the chat marks entries without page content
+
 ## 1.8.5 - 2026-11-24
 
 ### 变更 / Changed

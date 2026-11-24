@@ -10,7 +10,7 @@ import { MarkdownRenderer } from '@/components/common/MarkdownRenderer';
 import { MessageMetaRow, type MessageMetaProps } from '@/components/chat/MessageMetaRow';
 import { extractUserText, extractUserAttachments, extractSlashPrompts, extractSelectedSkillNames, extractComposerDisplay } from '@/lib/agent/message-helpers';
 import { compactTabText, describeTabReferences, findTabReferences, tabLink, type TabReference } from '@/lib/agent/tab-references';
-import { attachPillPreview, attachTabPreview, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT } from './tab-preview';
+import { attachPillPreview, attachTabPreview, handleTabLinkClick, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT, TAB_TITLE_LINK_CLASS } from './tab-preview';
 import { displayQuotedText, findQuoteTokens } from '@/lib/agent/quote-tokens';
 import { RECORDING_MIME } from '@/lib/agent/attachments';
 import { t } from '@/lib/i18n';
@@ -51,7 +51,7 @@ function HistoryAttachmentPill({ attachment }: { attachment: InlineAttachment })
 function HistoryQuotePill({ quote, title }: { quote: string; title?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (ref.current) return attachPillPreview(ref.current, title === undefined ? quote : compactTabText(quote, 280), undefined, undefined, title === undefined);
+    if (ref.current) return attachPillPreview(ref.current, title === undefined ? quote : compactTabText(quote, 280), undefined, undefined, title === undefined ? 'full' : 'compact');
   }, [quote, title]);
   return (
     <span ref={ref} data-quote-pill="true" data-history-reference={title === undefined ? undefined : true} className={`${QUOTE_PILL_STYLE} ${TAB_PILL_LAYOUT}`}>
@@ -62,17 +62,23 @@ function HistoryQuotePill({ quote, title }: { quote: string; title?: string }) {
 }
 
 const HistoryTabPill = memo(function HistoryTabPill({ reference }: { reference: TabReference }) {
+  const status = reference.bodyUnavailable ? t('chat.composer.tabBodyUnavailable') : undefined;
+  const href = tabLink(reference.url);
+  const title = compactTabText(reference.title, 28);
   return (
-    <a href={tabLink(reference.url)} target="_blank" rel="noopener noreferrer"
-      className={TAB_PILL_LAYOUT + ' bg-primary/10 text-primary'}
-      aria-label={reference.title} data-tab-reference="true"
+    <span className={TAB_PILL_LAYOUT + ' bg-primary/10 text-primary'}
+      aria-label={[reference.title, status].filter(Boolean).join(' · ')} data-tab-reference="true"
       ref={(anchor) => anchor ? attachTabPreview(anchor, reference) : undefined}>
       <Globe className="size-3.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 truncate">{compactTabText(reference.title, 28)}</span>
-    </a>
+      {href ? (
+        <a href={href} target="_blank" rel="noopener noreferrer" className={TAB_TITLE_LINK_CLASS}
+          onClick={(event) => handleTabLinkClick(event.nativeEvent, reference)}>{title}</a>
+      ) : <span className="min-w-0 truncate">{title}</span>}
+      {status && <span className="shrink-0 text-[0.8em] opacity-80">· {status}</span>}
+    </span>
   );
 }, ({ reference: a }, { reference: b }) =>
-  a.title === b.title && a.url === b.url && a.tabId === b.tabId && a.summary === b.summary);
+  a.title === b.title && a.url === b.url && a.tabId === b.tabId && a.summary === b.summary && a.bodyUnavailable === b.bodyUnavailable);
 
 /* ─── Branch switcher ─── */
 
@@ -250,6 +256,7 @@ export function UserMessageBubble({
     trailingTokens.push(attachmentToken(id));
   });
   const bubbleText = [composerDisplay?.text ?? text ?? '', ...trailingTokens].filter(Boolean).join(' ');
+  const sentTabs = new Map(findTabReferences(text ?? '').map(({ ref }) => [ref.id, ref]));
   const inlineParts = [
     ...findAttachmentTokens(bubbleText).map(({ id, from, to }) => {
       const attachment = displayAttachments.get(id);
@@ -259,7 +266,7 @@ export function UserMessageBubble({
       from, to, node: <HistoryQuotePill key={from} quote={quote} title={title} />,
     })),
     ...findTabReferences(bubbleText).map(({ ref, from, to }) => ({
-      from, to, node: <HistoryTabPill key={from} reference={ref} />,
+      from, to, node: <HistoryTabPill key={from} reference={sentTabs.get(ref.id) ?? ref} />,
     })),
     ...(composerDisplay?.references ?? []).map(({ kind, name, from, to }) => ({
       from, to,

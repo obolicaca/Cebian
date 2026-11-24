@@ -1,9 +1,9 @@
 import { attachmentToken, describeAttachmentTokens, findAttachmentTokens, type InlineAttachment } from '@/lib/agent/attachment-tokens';
 import { ATTACHMENT_LABEL_CLASS, attachmentName, attachmentPillClass, attachAttachmentPreview, imageAttachmentSrc, previewImageAttachment } from './attachment-pill';
-import { compactTabText, describeTabReferences, findTabReferences, tabReferenceToken, type TabReference } from '@/lib/agent/tab-references';
+import { compactTabText, describeTabReferences, findTabReferences, tabLink, tabReferenceToken, type TabReference } from '@/lib/agent/tab-references';
 import { displayQuotedText, findQuoteTokens } from '@/lib/agent/quote-tokens';
 import { readCopiedChatReferences } from '@/lib/ui/clipboard';
-import { attachPillPreview, attachTabPreview, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT } from './tab-preview';
+import { attachPillPreview, attachTabPreview, handleTabLinkClick, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT, TAB_TITLE_LINK_CLASS } from './tab-preview';
 
 /**
  * ComposerEditor — the chat composer's rich-text input (CodeMirror 6).
@@ -19,7 +19,7 @@ import { attachPillPreview, attachTabPreview, QUOTE_PILL_STYLE, TAB_PILL_LAYOUT 
  */
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Annotation, Compartment, EditorState, Prec, RangeSet, Transaction, type Extension } from '@codemirror/state';
-import { Decoration, EditorView, keymap, placeholder as cmPlaceholder, type DecorationSet, type PluginValue, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+import { Decoration, drawSelection, EditorView, keymap, placeholder as cmPlaceholder, type DecorationSet, type PluginValue, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands';
 import { findPromptTokens, findSkillTokens, type SkillNameRef } from '@/lib/ai-config/skill-tokens';
 import { SKILL_PILL_CLASS, SKILL_PILL_ICON_SVG } from '@/components/chat/SkillPill';
@@ -70,7 +70,7 @@ class SkillPillWidget extends WidgetType {
     label.className = 'min-w-0 truncate';
     label.textContent = this.name;
     span.append(icon, label);
-    if (this.description?.trim()) this.detach = attachPillPreview(span, this.description);
+    if (this.description?.trim()) this.detach = attachPillPreview(span, this.description, undefined, undefined, 'full');
     return span;
   }
   override destroy() { this.detach?.(); }
@@ -100,7 +100,7 @@ class PromptPillWidget extends WidgetType {
     label.className = 'min-w-0 truncate';
     label.textContent = this.name;
     span.append(icon, label);
-    if (this.preview?.trim()) this.detach = attachPillPreview(span, this.preview);
+    if (this.preview?.trim()) this.detach = attachPillPreview(span, this.preview, undefined, undefined, 'copyable');
     return span;
   }
   override destroy() { this.detach?.(); }
@@ -175,7 +175,7 @@ class QuotePillWidget extends WidgetType {
     label.className = 'min-w-0 truncate';
     label.textContent = compactTabText(this.title ?? this.quote, 28);
     pill.append(icon, label);
-    this.detach = attachPillPreview(pill, this.title === undefined ? this.quote : compactTabText(this.quote, 280), undefined, undefined, this.title === undefined);
+    this.detach = attachPillPreview(pill, this.quote, undefined, undefined, 'full');
     return pill;
   }
   override destroy() { this.detach?.(); }
@@ -185,7 +185,10 @@ class TabPillWidget extends WidgetType {
   private detach?: () => void;
   constructor(readonly reference: TabReference, readonly failure?: string) { super(); }
   override eq(other: TabPillWidget) {
-    return other.reference.id === this.reference.id && other.reference.title === this.reference.title && other.failure === this.failure;
+    return other.reference.id === this.reference.id && other.reference.title === this.reference.title
+      && other.reference.url === this.reference.url && other.reference.tabId === this.reference.tabId
+      && other.reference.summary === this.reference.summary && other.reference.bodyUnavailable === this.reference.bodyUnavailable
+      && other.failure === this.failure;
   }
   override toDOM(view: EditorView) {
     const span = document.createElement('span');
@@ -199,7 +202,7 @@ class TabPillWidget extends WidgetType {
     globe.className = 'absolute inset-0 group-hover:invisible group-focus-within:invisible';
     globe.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><ellipse cx="12" cy="12" rx="4" ry="10"/></svg>';
     icon.append(globe);
-    if (chrome.tabs?.get) {
+    if (tabLink(this.reference.url) && chrome.tabs?.get) {
       void chrome.tabs.get(this.reference.tabId).then((tab) => {
         if (tab.url !== this.reference.url || !tab.favIconUrl) return;
         const image = document.createElement('img');
@@ -214,8 +217,15 @@ class TabPillWidget extends WidgetType {
       const token = findTabReferences(view.state.doc.toString()).find(({ ref }) => ref.id === this.reference.id);
       if (token) removePillRange(view, token.from, token.to);
     });
-    const label = document.createElement('span');
-    label.className = 'min-w-0 truncate';
+    const href = tabLink(this.reference.url);
+    const label = href ? document.createElement('a') : document.createElement('span');
+    label.className = href ? TAB_TITLE_LINK_CLASS : 'min-w-0 truncate';
+    if (label instanceof HTMLAnchorElement && href) {
+      label.href = href;
+      label.target = '_blank';
+      label.rel = 'noopener noreferrer';
+      label.addEventListener('click', (event) => handleTabLinkClick(event, this.reference));
+    }
     label.textContent = compactTabText(this.reference.title, 28) + (this.failure ? ' · ' + this.failure : '');
     span.append(icon, label);
     icon.removeAttribute('aria-hidden');
@@ -341,6 +351,8 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, ComposerEditorPro
         ...historyKeymap,
       ]),
       EditorView.lineWrapping,
+      // Draw from the editor selection so the caret is visible even on an empty line.
+      drawSelection({ drawRangeCursor: false }),
       cmPlaceholder(placeholder),
       pillPlugin,
       // pill（replace 装饰，含 Skill / Prompt / 标签页 / 引用）都是原子的。
@@ -351,6 +363,11 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, ComposerEditorPro
         '&.cm-focused': { outline: 'none' },
         '.cm-scroller': { overflowY: 'auto', minHeight: '3.25rem', maxHeight: '9.375rem', fontFamily: 'inherit', lineHeight: '1.625' },
         '.cm-content': { padding: '0.5rem 0.75rem', fontFamily: 'inherit' },
+        '.cm-cursor': { borderLeftColor: 'var(--color-foreground)' },
+        '.cm-content[contenteditable="false"] ~ .cm-cursorLayer': { visibility: 'hidden' },
+        '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+          backgroundColor: 'color-mix(in srgb, var(--color-foreground) 22%, transparent)',
+        },
         '.cm-line': { padding: '0' },
         '.cm-placeholder': { color: 'var(--color-muted-foreground, #888)', opacity: '0.5' },
       }),
