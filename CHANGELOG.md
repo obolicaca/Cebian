@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## 1.8.5 - 2026-11-24
+
+### 变更 / Changed
+
+- 关于页的 GitHub 链接和更新检查改用 `obolicaca/Cebian`。有新版时可下载适合当前浏览器的安装包，也可查看公开发版记录
+
+- The About page links to `obolicaca/Cebian` and checks its releases for updates. It links to the public release list and offers a compatible ZIP when a newer version is available
+
 ## 1.8.4 - 2026-11-24
 
 ### 新增 / Added

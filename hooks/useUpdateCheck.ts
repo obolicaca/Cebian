@@ -6,21 +6,22 @@
  * every About-page mount. Call `recheck()` to force-refresh.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { compareVersions, GITHUB_RELEASES_API_URL, releaseDownloadUrl, releaseVersion, selectDownloadableRelease } from '@/lib/github-releases';
 
-const CACHE_KEY = 'cebian:updateCheck';
+const distribution = import.meta.env.FIREFOX ? 'firefox' : 'chrome';
+const CACHE_KEY = `cebian:updateCheck:${GITHUB_RELEASES_API_URL}:${distribution}`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
-const RELEASES_URL = 'https://api.github.com/repos/maotoumao/Cebian/releases/latest';
 
 export type UpdateStatus =
   | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'upToDate'; current: string; latest: string }
-  | { kind: 'updateAvailable'; current: string; latest: string }
+  | { kind: 'updateAvailable'; current: string; latest: string; downloadUrl: string }
   | { kind: 'error' };
 
 interface CacheEntry {
   checkedAt: number;
-  latest: string;
+  tag: string;
 }
 
 function readCache(): CacheEntry | null {
@@ -28,7 +29,7 @@ function readCache(): CacheEntry | null {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
-    if (typeof parsed.checkedAt !== 'number' || typeof parsed.latest !== 'string') return null;
+    if (typeof parsed.checkedAt !== 'number' || typeof parsed.tag !== 'string' || !releaseVersion(parsed.tag)) return null;
     return parsed;
   } catch {
     return null;
@@ -43,39 +44,17 @@ function writeCache(entry: CacheEntry): void {
   }
 }
 
-/**
- * Compare two semver-like strings. Strips any prerelease/build suffix
- * (anything after `-` or `+`) before numeric `a.b.c` comparison.
- * Returns 1, 0, -1.
- */
-function compareVersions(a: string, b: string): number {
-  const stripSuffix = (s: string) => s.split(/[-+]/)[0];
-  const pa = stripSuffix(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = stripSuffix(b).split('.').map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? 0;
-    if (da > db) return 1;
-    if (da < db) return -1;
-  }
-  return 0;
-}
-
-function stripV(tag: string): string {
-  return tag.replace(/^v/i, '').trim();
-}
-
-function buildStatus(current: string, latest: string): UpdateStatus {
+function buildStatus(current: string, tag: string): UpdateStatus {
+  const latest = releaseVersion(tag);
   return compareVersions(latest, current) > 0
-    ? { kind: 'updateAvailable', current, latest }
+    ? { kind: 'updateAvailable', current, latest, downloadUrl: releaseDownloadUrl(tag, distribution) }
     : { kind: 'upToDate', current, latest };
 }
 
 function initialStatus(current: string): UpdateStatus {
   const cached = readCache();
   if (cached && Date.now() - cached.checkedAt < CACHE_TTL_MS) {
-    return buildStatus(current, cached.latest);
+    return buildStatus(current, cached.tag);
   }
   return { kind: 'idle' };
 }
@@ -94,7 +73,7 @@ export function useUpdateCheck() {
       if (!force) {
         const cached = readCache();
         if (cached && Date.now() - cached.checkedAt < CACHE_TTL_MS) {
-          if (mountedRef.current) setStatus(buildStatus(current, cached.latest));
+          if (mountedRef.current) setStatus(buildStatus(current, cached.tag));
           return;
         }
       }
@@ -104,17 +83,17 @@ export function useUpdateCheck() {
       abortRef.current = controller;
       if (mountedRef.current) setStatus({ kind: 'checking' });
       try {
-        const res = await fetch(RELEASES_URL, {
+        const res = await fetch(GITHUB_RELEASES_API_URL, {
           headers: { Accept: 'application/vnd.github+json' },
+          credentials: 'omit',
+          cache: force ? 'no-store' : 'default',
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { tag_name?: string; prerelease?: boolean };
-        if (data.prerelease) throw new Error('latest release is a prerelease');
-        const latest = data.tag_name ? stripV(data.tag_name) : '';
-        if (!latest) throw new Error('missing tag_name');
-        writeCache({ checkedAt: Date.now(), latest });
-        if (mountedRef.current) setStatus(buildStatus(current, latest));
+        const tag = selectDownloadableRelease(await res.json(), distribution);
+        if (!tag) throw new Error('No compatible downloadable release');
+        writeCache({ checkedAt: Date.now(), tag });
+        if (mountedRef.current) setStatus(buildStatus(current, tag));
       } catch (err) {
         if ((err as Error)?.name === 'AbortError') return;
         console.warn('[useUpdateCheck] update check failed:', err);

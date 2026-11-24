@@ -178,7 +178,8 @@ settings:
     upToDate: "已是最新版本"
     # $1 = new version string (e.g. "1.2.3")
     updateAvailable: "发现新版本 v$1"
-    viewInstallGuide: "查看安装指南"
+    viewReleases: "查看发版记录"
+    downloadUpdate: "下载更新"
     checkFailed: "检查更新失败"
     followAuthor: "关注作者"
     socials:

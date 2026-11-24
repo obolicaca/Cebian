@@ -5,7 +5,7 @@ import type { ReactElement, ReactNode, SVGProps } from 'react';
 import { t } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { useUpdateCheck } from '@/hooks/useUpdateCheck';
-import { getInstallGuideUrl } from '@/lib/site-links';
+import { GITHUB_RELEASES_URL, GITHUB_REPO_URL } from '@/lib/github-releases';
 
 type SocialKey = 'wechat' | 'bilibili' | 'xiaohongshu' | 'x';
 
@@ -66,7 +66,7 @@ export function AboutSection() {
           </a>
           <span>·</span>
           <a
-            href="https://github.com/maotoumao/Cebian"
+            href={GITHUB_REPO_URL}
             target="_blank"
             rel="noreferrer noopener"
             className="underline underline-offset-2 hover:text-foreground transition-colors"
@@ -201,6 +201,10 @@ function UpdateCheckRow({ status, onRecheck }: UpdateCheckRowProps) {
         <span role="status" aria-live="polite">
           {statusNode}
         </span>
+        <a href={GITHUB_RELEASES_URL} target="_blank" rel="noreferrer noopener"
+          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
+          {t('settings.about.viewReleases')}
+        </a>
       </div>
       {status.kind === 'updateAvailable' && (
         <div
@@ -210,8 +214,8 @@ function UpdateCheckRow({ status, onRecheck }: UpdateCheckRowProps) {
         >
           <p className="text-xs">{t('settings.about.updateAvailable', [status.latest])}</p>
           <Button asChild size="sm">
-            <a href={getInstallGuideUrl()} target="_blank" rel="noreferrer noopener">
-              {t('settings.about.viewInstallGuide')}
+            <a href={status.downloadUrl} target="_blank" rel="noreferrer noopener">
+              {t('settings.about.downloadUpdate')}
             </a>
           </Button>
         </div>

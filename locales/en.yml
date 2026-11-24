@@ -183,7 +183,8 @@ settings:
     upToDate: "You are on the latest version"
     # $1 = new version string (e.g. "1.2.3")
     updateAvailable: "New version v$1 available"
-    viewInstallGuide: "View install guide"
+    viewReleases: "View releases"
+    downloadUpdate: "Download update"
     checkFailed: "Update check failed"
     followAuthor: "Follow the author"
     socials:
